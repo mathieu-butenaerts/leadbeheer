@@ -148,6 +148,7 @@
   .contact-head{ display:flex; align-items:center; justify-content:space-between; gap:10px; }
   .contact-name{ font-weight:600; font-size:13.5px; display:flex; align-items:center; gap:8px; color:var(--text); }
   .gender-badge{ font-size:10px; font-weight:700; color:var(--muted); background:var(--panel2); border:1px solid var(--border); border-radius:5px; padding:1px 5px; }
+  .contact-role{ font-size:11.5px; color:var(--dim); margin-top:1px; }
   .contact-actions{ display:flex; gap:2px; }
 
   .contact-grid{ display:grid; grid-template-columns:repeat(2,1fr); gap:8px 18px; font-size:12.5px; }
@@ -436,8 +437,11 @@
   function renderContactCard(companyId, p) {
     var html = '<div class="contact-card" data-contact-id="' + p.id + '">';
     html += '  <div class="contact-head">';
-    html += '    <div class="contact-name">' + esc(((p.first_name || "") + " " + (p.last_name || "")).trim() || "(naam onbekend)");
+    html += '    <div>';
+    html += '      <div class="contact-name">' + esc(((p.first_name || "") + " " + (p.last_name || "")).trim() || "(naam onbekend)");
     if (p.gender) html += ' <span class="gender-badge">' + esc(p.gender) + '</span>';
+    html += '      </div>';
+    if (p.job_title) html += '      <div class="contact-role">' + esc(p.job_title) + '</div>';
     html += '    </div>';
     html += '    <div class="contact-actions">';
     html += '      <button class="icon-btn" data-edit-contact="' + companyId + '|' + p.id + '" title="Bewerken"><svg width="14" height="14" viewBox="0 0 15 15" fill="none"><path d="M11.5 2.5L12.5 3.5L4.5 11.5L2 12L2.5 9.5L10.5 1.5L11.5 2.5Z" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/></svg></button>';
@@ -640,8 +644,8 @@
     html += '    <div class="form-grid">';
     html += field("First Name", "f-first", contact.first_name);
     html += field("Last Name", "f-last", contact.last_name);
+    html += field("Job Title", "f-job-title", contact.job_title);
     html += selectField("Gender", "f-gender", contact.gender, ["", "Man", "Vrouw", "Onbekend"]);
-    html += field("", "f-spacer-hide", "", true);
     html += field("Email", "f-email", contact.email);
     html += field("Email 2", "f-email2", contact.email2);
     html += field("Mobile Phone", "f-mobile", contact.mobile_phone);
@@ -657,8 +661,7 @@
     html += '</div>';
     $("#modal-root").innerHTML = html;
 
-    function field(label, id, value, hide) {
-      if (hide) return '<div class="form-field" style="visibility:hidden"></div>';
+    function field(label, id, value) {
       return '<div class="form-field"><label>' + esc(label) + '</label><input type="text" id="' + id + '" value="' + esc(value || "") + '"></div>';
     }
     function selectField(label, id, value, options) {
@@ -676,6 +679,7 @@
       var data = {
         first_name: $("#f-first").value.trim(),
         last_name: $("#f-last").value.trim(),
+        job_title: $("#f-job-title").value.trim(),
         gender: $("#f-gender").value,
         email: $("#f-email").value.trim(),
         email2: $("#f-email2").value.trim(),

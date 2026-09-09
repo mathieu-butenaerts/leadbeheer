@@ -30,6 +30,7 @@ create table if not exists public.contacts (
   company_id       uuid not null references public.companies(id) on delete cascade,
   first_name       text not null default '',
   last_name        text not null default '',
+  job_title        text not null default '',
   gender           text not null default '',
   email            text not null default '',
   email2           text not null default '',
@@ -42,6 +43,10 @@ create table if not exists public.contacts (
   hook             text not null default '',
   created_at       timestamptz not null default now()
 );
+
+-- Added after the initial release — ALTER so this script still works against
+-- a `contacts` table that was created before job_title existed.
+alter table public.contacts add column if not exists job_title text not null default '';
 
 create index if not exists idx_contacts_company on public.contacts(company_id);
 
@@ -127,25 +132,25 @@ where not exists (select 1 from public.companies c where c.name = v.name);
 -- name (not id, since the id is a random uuid we don't know ahead of time),
 -- and guarded so re-running this script won't create duplicates.
 insert into public.contacts (
-  company_id, first_name, last_name, gender, email, mobile_phone, work_phone,
+  company_id, first_name, last_name, job_title, gender, email, mobile_phone, work_phone,
   beller, vervolg, notities, belaantekeningen, hook
 )
-select c.id, v.first_name, v.last_name, v.gender, v.email, v.mobile_phone, v.work_phone,
+select c.id, v.first_name, v.last_name, v.job_title, v.gender, v.email, v.mobile_phone, v.work_phone,
   v.beller, v.vervolg, v.notities, v.belaantekeningen, v.hook
 from public.companies c
 join (values
-  ('Van Herck Verpakkingen', 'Els', 'Verhoeven', 'Vrouw', 'els.verhoeven@vanherck-voorbeeld.be',
+  ('Van Herck Verpakkingen', 'Els', 'Verhoeven', 'Inkoopmanager', 'Vrouw', 'els.verhoeven@vanherck-voorbeeld.be',
    '+32 478 12 34 56', '+32 3 210 00 10', 'Mathieu', 'Bellen op 12/09 voor prijsofferte',
    'Beslisser voor inkoop verpakkingsmateriaal.', 'Positief gesprek op 5/09, vraagt vergelijkende offerte.',
    'Zoekt duurzamere verpakking i.k.v. hun ESG-rapportage.'),
-  ('Van Herck Verpakkingen', 'Tom', 'Peeters', 'Man', 'tom.peeters@vanherck-voorbeeld.be',
+  ('Van Herck Verpakkingen', 'Tom', 'Peeters', 'Technisch Coördinator', 'Man', 'tom.peeters@vanherck-voorbeeld.be',
    '+32 475 22 11 09', '', '', '',
    'Technisch aanspreekpunt, geen beslissingsbevoegdheid.', '', ''),
-  ('BrightFlow Software', 'Sara', 'De Wilde', 'Vrouw', 'sara.dewilde@brightflow-voorbeeld.io',
+  ('BrightFlow Software', 'Sara', 'De Wilde', 'Head of Operations', 'Vrouw', 'sara.dewilde@brightflow-voorbeeld.io',
    '+32 496 33 44 55', '', 'Mathieu', 'Eerste kennismakingscall inplannen',
    'Head of Operations, contact gelegd via LinkedIn.', '',
    'Team groeit snel, mogelijk nood aan extra licenties binnen 2 maanden.')
-) as v(company_name, first_name, last_name, gender, email, mobile_phone, work_phone,
+) as v(company_name, first_name, last_name, job_title, gender, email, mobile_phone, work_phone,
        beller, vervolg, notities, belaantekeningen, hook)
   on v.company_name = c.name
 where not exists (
