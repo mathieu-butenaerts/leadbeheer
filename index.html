@@ -713,10 +713,8 @@
   $("#banner-close").addEventListener("click", function () { $("#sample-banner").style.display = "none"; });
 
   (async function boot() {
-    // TEMP (testing only): auth gate disabled so the page loads without a
-    // login. Re-enable before sharing this with colleagues — see README.
-    // var profile = await window.requireUser();
-    // if (!profile) return; // requireUser already redirected to login.html
+    var profile = await window.requireUser();
+    if (!profile) return; // requireUser already redirected to login.html
 
     supabase.from("companies").select("*").order("name").then(function (res) {
       if (res.error) {

@@ -3,6 +3,16 @@
 -- Uses the SAME project as Marktmonitor, so it reuses your existing `profiles` /
 -- `auth.users` accounts — anyone who can already log in to Marktmonitor can log
 -- in here too, no new registration needed.
+--
+-- Safe to re-run: every statement below is guarded (if not exists / drop if
+-- exists / on conflict), so running this again after a partial failure won't
+-- duplicate or break anything.
+
+-- Make sure gen_random_uuid() resolves without schema-qualifying it — some
+-- projects don't have pgcrypto on the search_path used by the SQL editor,
+-- which would otherwise fail the CREATE TABLE below and roll back everything
+-- in this script (explaining a "table not found" error afterwards).
+create extension if not exists pgcrypto;
 
 create table if not exists public.companies (
   id           uuid primary key default gen_random_uuid(),
@@ -85,10 +95,19 @@ create policy "authenticated write contacts" on public.contacts
   for all to authenticated using (true) with check (true);
 
 -- Live updates in the browser (company/contact changes push to every open tab).
--- If this errors with "already a member", the publication already includes
--- the table — safe to ignore.
-alter publication supabase_realtime add table public.companies;
-alter publication supabase_realtime add table public.contacts;
+-- Wrapped so re-running this script (or a table already being a member) can't
+-- error out and roll back everything else above.
+do $$
+begin
+  begin
+    execute 'alter publication supabase_realtime add table public.companies';
+  exception when duplicate_object then null;
+  end;
+  begin
+    execute 'alter publication supabase_realtime add table public.contacts';
+  exception when duplicate_object then null;
+  end;
+end $$;
 
 -- Optional: a few example rows so the page isn't empty on first load.
 -- Safe to delete straight from the Leadbeheer UI once you have real data.
@@ -97,3 +116,7 @@ values
   ('Van Herck Verpakkingen', 'https://www.linkedin.com/company/van-herck-verpakkingen', 'gecontacteerd', 'Bezig met vervanging van hun huidige leverancier voor kartonnen verpakkingen. Vervolgafspraak gepland.', 0),
   ('BrightFlow Software', 'https://www.linkedin.com/company/brightflow-software', 'nieuw', 'Binnengekomen via de website. Nog niet gecontacteerd.', 0)
 on conflict do nothing;
+
+-- Tell PostgREST to pick up the new tables immediately, instead of waiting
+-- for its own periodic schema refresh.
+notify pgrst, 'reload schema';

@@ -36,15 +36,6 @@ login/register flow, copied from that repo's `web/` folder.
 - `.github/workflows/deploy-pages.yml` — builds and publishes to GitHub Pages
   on every push to `main`.
 
-## Testing note
-
-The login gate in `index.html` (`window.requireUser()`) is currently
-**commented out** so the page loads without signing in — for local testing
-only. Row-level security in Supabase still only allows `authenticated`
-requests, so an anonymous visit will show an empty table, not an error. Undo
-the comment in `index.html`'s `boot()` function before sharing the link with
-colleagues.
-
 ## Note on the Claude Artifact version
 
 The original version of this CRM (built first, before this repo existed)
