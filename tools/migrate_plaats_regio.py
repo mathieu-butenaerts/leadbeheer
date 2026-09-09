@@ -63,16 +63,10 @@ def migrate(df):
     return rows
 
 
-def main():
-    if len(sys.argv) < 2:
-        raise SystemExit(f"Usage: python {Path(__file__).name} input.xlsx [output.xlsx]")
-    in_path = Path(sys.argv[1])
-    out_path = Path(sys.argv[2]) if len(sys.argv) > 2 else in_path.with_name(in_path.stem + "_migrated.xlsx")
-
+def main(in_path_str, out_path_str):
+    in_path = Path(in_path_str)
+    out_path = Path(out_path_str) 
+    
     df = read_source(in_path, REQUIRED_COLUMNS)
     rows = migrate(df)
     write_output(rows, out_path)
-
-
-if __name__ == "__main__":
-    main()

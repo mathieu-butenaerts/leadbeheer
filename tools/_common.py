@@ -4,6 +4,8 @@ Not a script itself -- imported by migrate_plaats_regio.py,
 migrate_land.py and migrate_native_format.py.
 """
 
+import os
+
 import pandas as pd
 
 # Must match TEMPLATE_COLUMNS in index.html exactly (same order, same
@@ -73,6 +75,16 @@ def read_source(path, required_columns):
 
 def write_output(rows, out_path):
     df = pd.DataFrame(rows, columns=TEMPLATE_COLUMNS)
+
+    if os.path.exists(out_path):
+        existing_df = pd.read_excel(out_path)
+        df = pd.concat([existing_df, df], ignore_index=True)
+
     df.to_excel(out_path, index=False)
     print(f"Wrote {len(df)} row(s) to {out_path}")
     print("Upload this file via \"Importeren\" in Leadbeheer to finish the migration.")
+
+def clear_output(out_path):
+    if os.path.exists(out_path):
+        os.remove(out_path)
+        print(f"Cleared existing file: {out_path}")
