@@ -714,7 +714,7 @@
 
   (async function boot() {
     var profile = await window.requireUser();
-    if (!profile) return; // requireUser already redirected to login.html
+    //if (!profile) return; // requireUser already redirected to login.html
 
     supabase.from("companies").select("*").order("name").then(function (res) {
       if (res.error) {
