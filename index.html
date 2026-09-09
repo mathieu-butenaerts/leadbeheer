@@ -6,6 +6,7 @@
 <title>Leadbeheer</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="auth.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@500;600;700&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
 <style>
@@ -98,6 +99,11 @@
   .filters input[type=text]{ font-family:inherit; font-size:12.5px; padding:9px 12px; border-radius:8px; border:1px solid var(--border);
     background:var(--bg2); color:var(--text); min-width:240px; }
   .filters input[type=text]:focus{ outline:2px solid var(--blauw); outline-offset:1px; }
+  .filters select{ font-family:inherit; font-size:12.5px; padding:9px 12px; border-radius:8px; border:1px solid var(--border);
+    background:var(--bg2); color:var(--text); }
+  .filters select:focus{ outline:2px solid var(--blauw); outline-offset:1px; }
+  .filters-spacer{ flex:1; }
+  .filters-actions{ display:flex; gap:8px; flex-wrap:wrap; }
   .stage-pills{ display:flex; flex-wrap:wrap; gap:8px; }
   .stage-pill-btn{ font-size:12px; font-weight:600; padding:7px 14px; border-radius:999px; cursor:pointer;
     background:rgba(255,255,255,0.04); color:var(--muted); border:1px solid rgba(255,255,255,0.1); }
@@ -158,6 +164,8 @@
   .cf .v.empty-val{ color:var(--dim); font-style:italic; }
   .cf a.v{ color:var(--sub); text-decoration:none; }
   .cf a.v:hover{ color:var(--blauw); text-decoration:underline; }
+  .cf .v.fu-overdue{ color:var(--magenta); font-weight:600; }
+  .cf .v.fu-soon{ color:var(--blauw-l); font-weight:600; }
 
   .hook-box{ background:rgba(131,0,125,0.14); border:1px solid rgba(131,0,125,0.35); border-radius:8px; padding:8px 10px;
     font-size:12.5px; color:#dda9d8; display:flex; gap:8px; }
@@ -186,6 +194,17 @@
     border-radius:7px; padding:8px 10px; font-size:13px; font-family:inherit; width:100%; }
   .form-field textarea{ min-height:58px; resize:vertical; }
   .modal-actions{ display:flex; justify-content:flex-end; gap:8px; margin-top:4px; }
+
+  .modal.wide{ max-width:720px; }
+  .import-summary{ display:flex; flex-wrap:wrap; gap:10px 20px; font-size:13px; }
+  .import-summary b{ font-family:'Archivo',sans-serif; font-size:16px; }
+  .import-summary .ok b{ color:var(--stage-gewonnen); }
+  .import-summary .skip b{ color:var(--stage-verloren); }
+  .import-dupes{ max-height:260px; overflow-y:auto; border:1px solid var(--border); border-radius:10px; }
+  .import-dupes table{ font-size:12px; }
+  .import-dupes th{ position:sticky; top:0; }
+  .import-dupes .reason{ color:var(--dim); font-size:11px; }
+  .import-dupes label{ display:flex; align-items:center; gap:6px; font-size:11.5px; color:var(--sub); cursor:pointer; white-space:nowrap; }
 
   .toast{ position:fixed; bottom:20px; left:50%; transform:translateX(-50%); background:var(--panel2); border:1px solid var(--border);
     color:var(--text); padding:9px 16px; border-radius:8px; font-size:13px; box-shadow:0 10px 30px rgba(0,0,0,0.4); z-index:60;
@@ -241,6 +260,20 @@
   <div class="filters">
     <input type="text" id="search-input" placeholder="Zoek op bedrijfsnaam…">
     <div class="stage-pills" id="stage-chips"></div>
+    <select id="beller-filter"><option value="">Alle bellers</option></select>
+    <select id="followup-filter">
+      <option value="">Alle vervolgdata</option>
+      <option value="overdue">Verlopen</option>
+      <option value="week">Deze week</option>
+      <option value="none">Geen datum</option>
+    </select>
+    <div class="filters-spacer"></div>
+    <div class="filters-actions">
+      <button class="btn btn-quiet" id="btn-template">Sjabloon downloaden</button>
+      <button class="btn btn-quiet" id="btn-import">Importeren</button>
+      <button class="btn btn-quiet" id="btn-export">Exporteren</button>
+      <input type="file" id="import-file" accept=".xlsx,.xls" style="display:none">
+    </div>
   </div>
 
   <div class="table-wrap">
@@ -280,13 +313,23 @@
   var state = {
     companies: [],
     contactsByCompany: {},
-    contactChannel: null,
     expandedCompanyId: null,
     search: "",
     stageFilter: "all",
+    bellerFilter: "",
+    followUpFilter: "",
     savedTimers: {}
   };
   var companiesChannel = null;
+  var contactsChannel = null;
+
+  var TEMPLATE_COLUMNS = [
+    "Company", "Company LinkedIn", "Fase", "Bedrijfsnotities",
+    "First Name", "Last Name", "Job Title", "Gender",
+    "Email", "Email 2", "Mobile Phone", "Work Phone",
+    "Beller", "Vervolg", "Vervolgdatum",
+    "Notities", "Belaantekeningen", "Mogelijk interessante hook"
+  ];
 
   function $(sel, root) { return (root || document).querySelector(sel); }
   function esc(s) {
@@ -312,7 +355,46 @@
   function render() {
     renderStats();
     renderChips();
+    renderBellerOptions();
     renderTable();
+  }
+
+  function renderBellerOptions() {
+    var sel = $("#beller-filter");
+    var seen = {};
+    var names = [];
+    Object.keys(state.contactsByCompany).forEach(function (companyId) {
+      (state.contactsByCompany[companyId] || []).forEach(function (p) {
+        var b = (p.beller || "").trim();
+        if (b && !seen[b]) { seen[b] = true; names.push(b); }
+      });
+    });
+    names.sort(function (a, b) { return a.localeCompare(b); });
+    var current = sel.value;
+    sel.innerHTML = '<option value="">Alle bellers</option>' + names.map(function (n) {
+      return '<option value="' + esc(n) + '"' + (n === current ? " selected" : "") + '>' + esc(n) + '</option>';
+    }).join("");
+  }
+
+  // "overdue" | "week" | "none" | "" (any date matches "")
+  function followUpStatus(dateStr) {
+    if (!dateStr) return "none";
+    var d = new Date(dateStr + "T00:00:00");
+    var today = new Date(); today.setHours(0, 0, 0, 0);
+    var diffDays = Math.round((d - today) / 86400000);
+    if (diffDays < 0) return "overdue";
+    if (diffDays <= 7) return "week";
+    return "later";
+  }
+
+  function companyMatchesContactFilters(c) {
+    if (!state.bellerFilter && !state.followUpFilter) return true;
+    var contacts = state.contactsByCompany[c.id] || [];
+    return contacts.some(function (p) {
+      var bellerOk = !state.bellerFilter || (p.beller || "").trim() === state.bellerFilter;
+      var dateOk = !state.followUpFilter || followUpStatus(p.follow_up_date) === state.followUpFilter;
+      return bellerOk && dateOk;
+    });
   }
 
   function renderStats() {
@@ -353,6 +435,7 @@
     return state.companies.filter(function (c) {
       if (state.stageFilter !== "all" && c.stage !== state.stageFilter) return false;
       if (q && (c.name || "").toLowerCase().indexOf(q) === -1) return false;
+      if (!companyMatchesContactFilters(c)) return false;
       return true;
     });
   }
@@ -435,6 +518,16 @@
     return '<div class="cf"><span class="k">' + esc(label) + '</span>' + content + '</div>';
   }
 
+  function followUpFieldBlock(dateStr) {
+    if (!dateStr) return fieldBlock("Vervolgdatum", "");
+    var status = followUpStatus(dateStr);
+    var d = new Date(dateStr + "T00:00:00");
+    var formatted = d.toLocaleDateString("nl-NL", { day: "2-digit", month: "2-digit", year: "numeric" });
+    var suffix = status === "overdue" ? " · verlopen" : (status === "week" ? " · binnenkort" : "");
+    var cls = status === "overdue" ? " fu-overdue" : (status === "week" ? " fu-soon" : "");
+    return '<div class="cf"><span class="k">Vervolgdatum</span><span class="v tnum' + cls + '">' + esc(formatted + suffix) + '</span></div>';
+  }
+
   function renderContactCard(companyId, p) {
     var html = '<div class="contact-card" data-contact-id="' + p.id + '">';
     html += '  <div class="contact-head">';
@@ -457,6 +550,7 @@
     html += fieldBlock("Vast", p.work_phone, { link: true, tel: true, mono: true });
     html += fieldBlock("Beller", p.beller);
     html += fieldBlock("Vervolg", p.vervolg);
+    html += followUpFieldBlock(p.follow_up_date);
     html += '  </div>';
 
     if (p.hook) {
@@ -533,45 +627,54 @@
   }
 
   function toggleCompany(id) {
-    if (state.expandedCompanyId === id) {
-      state.expandedCompanyId = null;
-      unsubscribeContacts();
+    state.expandedCompanyId = (state.expandedCompanyId === id) ? null : id;
+    render();
+  }
+
+  // All contacts are loaded once at boot (see boot() below) and kept live via
+  // a single realtime channel, rather than fetched per company on expand —
+  // filtering by Beller / Vervolgdatum needs every company's contacts, not
+  // just whichever one is currently open, and at this app's scale (a lead
+  // list, not a firehose) loading the whole table up front is cheap.
+  function indexContactsByCompany(rows) {
+    var byCompany = {};
+    (rows || []).forEach(function (p) {
+      if (!byCompany[p.company_id]) byCompany[p.company_id] = [];
+      byCompany[p.company_id].push(p);
+    });
+    Object.keys(byCompany).forEach(function (id) {
+      byCompany[id].sort(function (a, b) { return (a.first_name || "").localeCompare(b.first_name || ""); });
+    });
+    return byCompany;
+  }
+
+  function applyContactChange(payload) {
+    // A DELETE's payload.old is only guaranteed to carry the primary key
+    // (unless REPLICA IDENTITY FULL is set on the table), so company_id may
+    // be missing there — search every company's list instead of trusting it.
+    if (payload.eventType === "DELETE") {
+      var deletedId = payload.old && payload.old.id;
+      if (!deletedId) return;
+      Object.keys(state.contactsByCompany).forEach(function (companyId) {
+        var list = state.contactsByCompany[companyId];
+        var idx = list.findIndex(function (p) { return p.id === deletedId; });
+        if (idx >= 0) list.splice(idx, 1);
+      });
       render();
       return;
     }
-    unsubscribeContacts();
-    state.expandedCompanyId = id;
-    render();
-    loadAndSubscribeContacts(id);
-  }
-
-  function unsubscribeContacts() {
-    if (state.contactChannel) {
-      supabase.removeChannel(state.contactChannel);
-      state.contactChannel = null;
+    var rec = payload.new;
+    if (!rec) return;
+    var list = state.contactsByCompany[rec.company_id] || [];
+    var idx = list.findIndex(function (p) { return p.id === rec.id; });
+    if (idx >= 0) {
+      list[idx] = rec;
+    } else {
+      list.push(rec);
+      list.sort(function (a, b) { return (a.first_name || "").localeCompare(b.first_name || ""); });
     }
-  }
-
-  function loadAndSubscribeContacts(companyId) {
-    supabase.from("contacts").select("*").eq("company_id", companyId).order("first_name")
-      .then(function (res) {
-        if (res.error) { console.error(res.error); toast("Kon contactpersonen niet laden"); return; }
-        state.contactsByCompany[companyId] = res.data || [];
-        if (state.expandedCompanyId === companyId) render();
-      });
-
-    state.contactChannel = supabase.channel("contacts-" + companyId)
-      .on("postgres_changes", { event: "*", schema: "public", table: "contacts", filter: "company_id=eq." + companyId }, function () {
-        // Re-fetch on any change to this company's contacts; simpler and safer
-        // than patching individual rows, and this list is always small.
-        supabase.from("contacts").select("*").eq("company_id", companyId).order("first_name")
-          .then(function (res) {
-            if (res.error) return;
-            state.contactsByCompany[companyId] = res.data || [];
-            if (state.expandedCompanyId === companyId) render();
-          });
-      })
-      .subscribe();
+    state.contactsByCompany[rec.company_id] = list;
+    render();
   }
 
   // ---------- data ops ----------
@@ -653,6 +756,7 @@
     html += field("Work Phone", "f-work", contact.work_phone);
     html += field("Beller", "f-beller", contact.beller);
     html += field("Vervolg", "f-vervolg", contact.vervolg);
+    html += dateField("Vervolgdatum", "f-vervolgdatum", contact.follow_up_date);
     html += fieldArea("Notities", "f-notities", contact.notities, true);
     html += fieldArea("Belaantekeningen", "f-belaantekeningen", contact.belaantekeningen, true);
     html += fieldArea("Mogelijk interessante hook", "f-hook", contact.hook, true);
@@ -664,6 +768,9 @@
 
     function field(label, id, value) {
       return '<div class="form-field"><label>' + esc(label) + '</label><input type="text" id="' + id + '" value="' + esc(value || "") + '"></div>';
+    }
+    function dateField(label, id, value) {
+      return '<div class="form-field"><label>' + esc(label) + '</label><input type="date" id="' + id + '" value="' + esc(value || "") + '"></div>';
     }
     function selectField(label, id, value, options) {
       return '<div class="form-field"><label>' + esc(label) + '</label><select id="' + id + '">' + options.map(function (o) {
@@ -688,6 +795,7 @@
         work_phone: $("#f-work").value.trim(),
         beller: $("#f-beller").value.trim(),
         vervolg: $("#f-vervolg").value.trim(),
+        follow_up_date: $("#f-vervolgdatum").value || null,
         notities: $("#f-notities").value.trim(),
         belaantekeningen: $("#f-belaantekeningen").value.trim(),
         hook: $("#f-hook").value.trim()
@@ -707,6 +815,248 @@
     });
   }
 
+  // ---------- import / export ----------
+
+  function stageKeyFromLabel(label) {
+    var match = STAGES.find(function (s) { return s.label.toLowerCase() === (label || "").trim().toLowerCase(); });
+    return match ? match.key : "";
+  }
+
+  function parseDateCell(v) {
+    if (v == null || v === "") return null;
+    if (v instanceof Date) {
+      return isNaN(v.getTime()) ? null : v.toISOString().slice(0, 10);
+    }
+    var s = String(v).trim();
+    var m = s.match(/^(\d{4})-(\d{2})-(\d{2})/);
+    if (m) return m[0];
+    m = s.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})$/); // dd/mm/yyyy or dd-mm-yyyy
+    if (m) return m[3] + "-" + m[2].padStart(2, "0") + "-" + m[1].padStart(2, "0");
+    var d = new Date(s);
+    return isNaN(d.getTime()) ? null : d.toISOString().slice(0, 10);
+  }
+
+  function downloadTemplate() {
+    var example = ["Van Herck Verpakkingen", "https://www.linkedin.com/company/van-herck-verpakkingen", "Gecontacteerd",
+      "Bezig met vervanging van hun huidige leverancier.", "Els", "Verhoeven", "Inkoopmanager", "Vrouw",
+      "els.verhoeven@voorbeeld.be", "", "+32 478 12 34 56", "+32 3 210 00 10", "Mathieu",
+      "Bellen voor prijsofferte", "2026-09-20", "Beslisser voor inkoop verpakkingsmateriaal.",
+      "Positief gesprek, vraagt vergelijkende offerte.", "Zoekt duurzamere verpakking i.k.v. ESG-rapportage."];
+    var ws = XLSX.utils.aoa_to_sheet([TEMPLATE_COLUMNS, example]);
+    var wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, "Leads");
+    XLSX.writeFile(wb, "leadbeheer-sjabloon.xlsx");
+  }
+
+  function exportData() {
+    var rows = [TEMPLATE_COLUMNS];
+    state.companies.forEach(function (c) {
+      var contacts = state.contactsByCompany[c.id] || [];
+      var stageLabel = stageInfo(c.stage).label;
+      if (!contacts.length) {
+        rows.push([c.name, c.linkedin, stageLabel, c.notes, "", "", "", "", "", "", "", "", "", "", "", "", "", ""]);
+        return;
+      }
+      contacts.forEach(function (p) {
+        rows.push([
+          c.name, c.linkedin, stageLabel, c.notes,
+          p.first_name, p.last_name, p.job_title, p.gender,
+          p.email, p.email2, p.mobile_phone, p.work_phone,
+          p.beller, p.vervolg, p.follow_up_date || "",
+          p.notities, p.belaantekeningen, p.hook
+        ]);
+      });
+    });
+    var ws = XLSX.utils.aoa_to_sheet(rows);
+    var wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, "Leads");
+    XLSX.writeFile(wb, "leadbeheer-export-" + new Date().toISOString().slice(0, 10) + ".xlsx");
+  }
+
+  function handleImportFile(file) {
+    var reader = new FileReader();
+    reader.onerror = function () { toast("Kon bestand niet lezen"); };
+    reader.onload = function (e) {
+      var wb;
+      try {
+        wb = XLSX.read(new Uint8Array(e.target.result), { type: "array", cellDates: true });
+      } catch (err) {
+        console.error(err);
+        toast("Kon Excel-bestand niet lezen — is het een geldig .xlsx bestand?");
+        return;
+      }
+      var sheet = wb.Sheets[wb.SheetNames[0]];
+      var rows = XLSX.utils.sheet_to_json(sheet, { defval: "" });
+      if (!rows.length) { toast("Het bestand bevat geen rijen"); return; }
+      processImportRows(rows);
+    };
+    reader.readAsArrayBuffer(file);
+  }
+
+  // Groups the flat, one-row-per-contact sheet into per-company groups, and
+  // flags rows that look like duplicates of what's already in the database
+  // (matched by email first, else by first+last name) or of an earlier row
+  // in the same file — so uploading the same sheet twice is harmless.
+  function processImportRows(rawRows) {
+    function val(row, key) { return String(row[key] == null ? "" : row[key]).trim(); }
+
+    var existingCompanyByKey = {};
+    state.companies.forEach(function (c) { existingCompanyByKey[(c.name || "").trim().toLowerCase()] = c; });
+
+    var existingContactKeys = {};
+    Object.keys(state.contactsByCompany).forEach(function (companyId) {
+      var keys = {};
+      state.contactsByCompany[companyId].forEach(function (p) {
+        var email = (p.email || "").trim().toLowerCase();
+        var nameKey = ((p.first_name || "") + " " + (p.last_name || "")).trim().toLowerCase();
+        if (email) keys["email:" + email] = true;
+        if (nameKey) keys["name:" + nameKey] = true;
+      });
+      existingContactKeys[companyId] = keys;
+    });
+
+    var groups = {};
+    var order = [];
+    var skippedNoCompany = 0;
+
+    rawRows.forEach(function (row) {
+      var companyName = val(row, "Company");
+      if (!companyName) { skippedNoCompany++; return; }
+      var key = companyName.toLowerCase();
+      if (!groups[key]) {
+        groups[key] = {
+          name: companyName, linkedin: "", stage: "", notes: "",
+          existing: existingCompanyByKey[key] || null,
+          contacts: [], seenKeys: {}
+        };
+        order.push(key);
+      }
+      var g = groups[key];
+      if (!g.linkedin) g.linkedin = val(row, "Company LinkedIn");
+      if (!g.stage) g.stage = stageKeyFromLabel(val(row, "Fase"));
+      if (!g.notes) g.notes = val(row, "Bedrijfsnotities");
+
+      var firstName = val(row, "First Name"), lastName = val(row, "Last Name");
+      if (!firstName && !lastName) return; // company-only row — nothing to add as a contact
+
+      var contact = {
+        first_name: firstName, last_name: lastName,
+        job_title: val(row, "Job Title"), gender: val(row, "Gender"),
+        email: val(row, "Email"), email2: val(row, "Email 2"),
+        mobile_phone: val(row, "Mobile Phone"), work_phone: val(row, "Work Phone"),
+        beller: val(row, "Beller"), vervolg: val(row, "Vervolg"),
+        follow_up_date: parseDateCell(row["Vervolgdatum"]),
+        notities: val(row, "Notities"), belaantekeningen: val(row, "Belaantekeningen"),
+        hook: val(row, "Mogelijk interessante hook")
+      };
+
+      var emailKey = contact.email ? "email:" + contact.email.toLowerCase() : "";
+      var nameKey = "name:" + (firstName + " " + lastName).trim().toLowerCase();
+      var existingKeys = g.existing ? (existingContactKeys[g.existing.id] || {}) : {};
+      var isDuplicate = !!((emailKey && existingKeys[emailKey]) || existingKeys[nameKey]);
+      if (!isDuplicate) {
+        var seenKey = emailKey || nameKey;
+        if (g.seenKeys[seenKey]) isDuplicate = true;
+        g.seenKeys[seenKey] = true;
+      }
+
+      g.contacts.push({ data: contact, duplicate: isDuplicate, include: !isDuplicate });
+    });
+
+    var groupList = order.map(function (key) { return groups[key]; });
+    if (!groupList.length) {
+      toast(skippedNoCompany ? "Geen geldige rijen — elke rij heeft een Company nodig" : "Geen rijen gevonden");
+      return;
+    }
+    openImportPreviewModal(groupList);
+  }
+
+  function openImportPreviewModal(groups) {
+    var newCompanies = groups.filter(function (g) { return !g.existing; }).length;
+    var existingTouched = groups.filter(function (g) { return g.existing; }).length;
+    var allContacts = [];
+    groups.forEach(function (g) {
+      g.contacts.forEach(function (c) { allContacts.push({ group: g, contact: c }); });
+    });
+    var newContacts = allContacts.filter(function (x) { return !x.contact.duplicate; }).length;
+    var dupes = allContacts.filter(function (x) { return x.contact.duplicate; });
+
+    var html = '';
+    html += '<div class="modal-overlay" id="overlay">';
+    html += '  <div class="modal wide">';
+    html += '    <h2>Import controleren</h2>';
+    html += '    <div class="import-summary">';
+    html += '      <span class="ok">Nieuwe bedrijven: <b>' + newCompanies + '</b></span>';
+    html += '      <span>Aangevulde bedrijven: <b>' + existingTouched + '</b></span>';
+    html += '      <span class="ok">Nieuwe contactpersonen: <b>' + newContacts + '</b></span>';
+    html += '      <span class="skip">Overgeslagen als dubbel: <b>' + dupes.length + '</b></span>';
+    html += '    </div>';
+    if (dupes.length) {
+      html += '    <div>';
+      html += '      <span class="field-label">Overgeslagen (vink aan om toch te importeren)</span>';
+      html += '      <div class="import-dupes"><table><thead><tr><th>Bedrijf</th><th>Naam</th><th>Reden</th><th></th></tr></thead><tbody>';
+      dupes.forEach(function (x, i) {
+        var c = x.contact.data;
+        html += '<tr><td>' + esc(x.group.name) + '</td><td>' + esc((c.first_name + " " + c.last_name).trim() || "(naam onbekend)") + '</td>' +
+          '<td class="reason">komt al voor (e-mail of naam)</td>' +
+          '<td><label><input type="checkbox" data-dupe-include="' + i + '"> Toch importeren</label></td></tr>';
+      });
+      html += '      </tbody></table></div>';
+      html += '    </div>';
+    }
+    html += '    <div class="modal-actions"><button class="btn btn-quiet" id="modal-cancel">Annuleren</button><button class="btn" id="modal-save">Importeren bevestigen</button></div>';
+    html += '  </div>';
+    html += '</div>';
+    $("#modal-root").innerHTML = html;
+
+    Array.prototype.forEach.call($("#modal-root").querySelectorAll("[data-dupe-include]"), function (el) {
+      el.addEventListener("change", function () {
+        dupes[parseInt(el.getAttribute("data-dupe-include"), 10)].contact.include = el.checked;
+      });
+    });
+
+    $("#overlay").addEventListener("click", function (e) { if (e.target.id === "overlay") closeModal(); });
+    $("#modal-cancel").addEventListener("click", closeModal);
+    $("#modal-save").addEventListener("click", function () { runImport(groups); });
+  }
+
+  function runImport(groups) {
+    var toCreate = groups.filter(function (g) { return !g.existing; });
+    var createPayload = toCreate.map(function (g) {
+      return { name: g.name, linkedin: g.linkedin, stage: g.stage || "nieuw", notes: g.notes };
+    });
+
+    function insertContacts(nameToId) {
+      var contactPayload = [];
+      groups.forEach(function (g) {
+        var companyId = g.existing ? g.existing.id : nameToId[g.name.toLowerCase()];
+        if (!companyId) return;
+        g.contacts.forEach(function (c) {
+          if (!c.include) return;
+          contactPayload.push(Object.assign({}, c.data, { company_id: companyId }));
+        });
+      });
+      if (!contactPayload.length) {
+        toast("Bedrijven geïmporteerd, geen nieuwe contactpersonen om toe te voegen");
+        closeModal();
+        return;
+      }
+      supabase.from("contacts").insert(contactPayload).then(function (res) {
+        if (res.error) { console.error(res.error); toast("Import van contactpersonen mislukt: " + res.error.message); return; }
+        toast(contactPayload.length + " contactperso" + (contactPayload.length === 1 ? "on" : "nen") + " geïmporteerd");
+        closeModal();
+      });
+    }
+
+    if (!createPayload.length) { insertContacts({}); return; }
+    supabase.from("companies").insert(createPayload).select().then(function (res) {
+      if (res.error) { console.error(res.error); toast("Import van bedrijven mislukt: " + res.error.message); return; }
+      var nameToId = {};
+      (res.data || []).forEach(function (row) { nameToId[(row.name || "").toLowerCase()] = row.id; });
+      insertContacts(nameToId);
+    });
+  }
+
   // ---------- boot ----------
 
   $("#btn-add-company").addEventListener("click", openCompanyModal);
@@ -715,7 +1065,23 @@
     state.search = e.target.value;
     renderTable();
   });
+  $("#beller-filter").addEventListener("change", function (e) {
+    state.bellerFilter = e.target.value;
+    renderTable();
+  });
+  $("#followup-filter").addEventListener("change", function (e) {
+    state.followUpFilter = e.target.value;
+    renderTable();
+  });
   $("#banner-close").addEventListener("click", function () { $("#sample-banner").style.display = "none"; });
+  $("#btn-template").addEventListener("click", downloadTemplate);
+  $("#btn-export").addEventListener("click", exportData);
+  $("#btn-import").addEventListener("click", function () { $("#import-file").click(); });
+  $("#import-file").addEventListener("change", function (e) {
+    var file = e.target.files[0];
+    e.target.value = ""; // allow re-selecting the same file later
+    if (file) handleImportFile(file);
+  });
 
   (async function boot() {
     var profile = await window.requireUser();
@@ -723,14 +1089,20 @@
 
     if (profile.role === "admin") $("#adminLink").style.display = "inline-flex";
 
-    supabase.from("companies").select("*").order("name").then(function (res) {
-      if (res.error) {
-        showError("Kon bedrijven niet laden: " + res.error.message);
+    Promise.all([
+      supabase.from("companies").select("*").order("name"),
+      supabase.from("contacts").select("*")
+    ]).then(function (results) {
+      var companiesRes = results[0], contactsRes = results[1];
+      if (companiesRes.error || contactsRes.error) {
+        var err = companiesRes.error || contactsRes.error;
+        showError("Kon gegevens niet laden: " + err.message);
         $("#liveDot").classList.add("off");
         $("#liveText").textContent = "Fout bij laden";
         return;
       }
-      state.companies = res.data || [];
+      state.companies = companiesRes.data || [];
+      state.contactsByCompany = indexContactsByCompany(contactsRes.data);
       $("#liveText").textContent = "Live · verbonden";
       render();
     });
@@ -738,6 +1110,12 @@
     companiesChannel = supabase.channel("companies-live")
       .on("postgres_changes", { event: "*", schema: "public", table: "companies" }, function (payload) {
         applyCompanyChange(payload);
+      })
+      .subscribe();
+
+    contactsChannel = supabase.channel("contacts-live")
+      .on("postgres_changes", { event: "*", schema: "public", table: "contacts" }, function (payload) {
+        applyContactChange(payload);
       })
       .subscribe();
   })();
