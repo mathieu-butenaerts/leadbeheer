@@ -111,11 +111,47 @@ end $$;
 
 -- Optional: a few example rows so the page isn't empty on first load.
 -- Safe to delete straight from the Leadbeheer UI once you have real data.
+-- (Guarded with NOT EXISTS rather than ON CONFLICT: `companies.name` has no
+-- unique constraint, so ON CONFLICT DO NOTHING wouldn't actually catch a
+-- re-run and would duplicate these rows every time the script is run.)
 insert into public.companies (name, linkedin, stage, notes, contact_count)
-values
-  ('Van Herck Verpakkingen', 'https://www.linkedin.com/company/van-herck-verpakkingen', 'gecontacteerd', 'Bezig met vervanging van hun huidige leverancier voor kartonnen verpakkingen. Vervolgafspraak gepland.', 0),
-  ('BrightFlow Software', 'https://www.linkedin.com/company/brightflow-software', 'nieuw', 'Binnengekomen via de website. Nog niet gecontacteerd.', 0)
-on conflict do nothing;
+select v.name, v.linkedin, v.stage, v.notes, 0
+from (values
+  ('Van Herck Verpakkingen', 'https://www.linkedin.com/company/van-herck-verpakkingen', 'gecontacteerd', 'Bezig met vervanging van hun huidige leverancier voor kartonnen verpakkingen. Vervolgafspraak gepland.'),
+  ('BrightFlow Software', 'https://www.linkedin.com/company/brightflow-software', 'nieuw', 'Binnengekomen via de website. Nog niet gecontacteerd.')
+) as v(name, linkedin, stage, notes)
+where not exists (select 1 from public.companies c where c.name = v.name);
+
+-- A couple of example contacts for those two companies, so expanding a
+-- company shows what a filled-in row looks like. Matched to the company by
+-- name (not id, since the id is a random uuid we don't know ahead of time),
+-- and guarded so re-running this script won't create duplicates.
+insert into public.contacts (
+  company_id, first_name, last_name, gender, email, mobile_phone, work_phone,
+  beller, vervolg, notities, belaantekeningen, hook
+)
+select c.id, v.first_name, v.last_name, v.gender, v.email, v.mobile_phone, v.work_phone,
+  v.beller, v.vervolg, v.notities, v.belaantekeningen, v.hook
+from public.companies c
+join (values
+  ('Van Herck Verpakkingen', 'Els', 'Verhoeven', 'Vrouw', 'els.verhoeven@vanherck-voorbeeld.be',
+   '+32 478 12 34 56', '+32 3 210 00 10', 'Mathieu', 'Bellen op 12/09 voor prijsofferte',
+   'Beslisser voor inkoop verpakkingsmateriaal.', 'Positief gesprek op 5/09, vraagt vergelijkende offerte.',
+   'Zoekt duurzamere verpakking i.k.v. hun ESG-rapportage.'),
+  ('Van Herck Verpakkingen', 'Tom', 'Peeters', 'Man', 'tom.peeters@vanherck-voorbeeld.be',
+   '+32 475 22 11 09', '', '', '',
+   'Technisch aanspreekpunt, geen beslissingsbevoegdheid.', '', ''),
+  ('BrightFlow Software', 'Sara', 'De Wilde', 'Vrouw', 'sara.dewilde@brightflow-voorbeeld.io',
+   '+32 496 33 44 55', '', 'Mathieu', 'Eerste kennismakingscall inplannen',
+   'Head of Operations, contact gelegd via LinkedIn.', '',
+   'Team groeit snel, mogelijk nood aan extra licenties binnen 2 maanden.')
+) as v(company_name, first_name, last_name, gender, email, mobile_phone, work_phone,
+       beller, vervolg, notities, belaantekeningen, hook)
+  on v.company_name = c.name
+where not exists (
+  select 1 from public.contacts ct
+  where ct.company_id = c.id and ct.first_name = v.first_name and ct.last_name = v.last_name
+);
 
 -- Tell PostgREST to pick up the new tables immediately, instead of waiting
 -- for its own periodic schema refresh.
