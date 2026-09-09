@@ -7,6 +7,7 @@
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="auth.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.5.0/dist/chart.umd.js"></script>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@500;600;700&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
 <style>
@@ -86,6 +87,24 @@
   .card.accent .value{ color:var(--blauw); }
   .card.won .value{ color:var(--stage-gewonnen); }
 
+  /* ---- summary ---- */
+  .layout{ display:grid; grid-template-columns:1.1fr 1fr; gap:14px; margin-bottom:16px; }
+  @media (max-width:800px){ .layout{ grid-template-columns:1fr; } }
+  .panel{ background:var(--panel); border:1px solid var(--border); border-radius:14px; padding:16px 18px; }
+  .panel h2{ font-size:14px; font-weight:600; margin:0 0 12px 0; color:var(--text); }
+  .panel h2 .hint{ color:var(--dim); font-weight:400; font-size:11px; text-transform:none; letter-spacing:0; }
+  .chart-wrap{ position:relative; height:210px; }
+  .ranklist{ list-style:none; margin:0; padding:0; display:flex; flex-direction:column; gap:2px; max-height:210px; overflow-y:auto; }
+  .ranklist li{ display:flex; justify-content:space-between; align-items:center; gap:10px; padding:7px 8px; border-radius:8px; cursor:pointer; }
+  .ranklist li:hover{ background:rgba(255,255,255,0.05); }
+  .ranklist .who{ display:block; font-size:12.5px; color:var(--sub); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .ranklist .co{ display:block; font-size:11px; color:var(--dim); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .ranklist .when{ flex:none; font-size:11.5px; font-weight:700; color:var(--muted); }
+  .ranklist .empty{ color:var(--dim); font-style:italic; font-size:12.5px; padding:8px; cursor:default; }
+  .ranklist .empty:hover{ background:none; }
+  .fu-overdue{ color:var(--magenta); }
+  .fu-soon{ color:var(--blauw-l); }
+
   /* ---- filters ---- */
   .filters{ display:flex; flex-wrap:wrap; gap:12px; align-items:center; background:var(--panel); border:1px solid var(--border);
     border-radius:14px; padding:14px 16px; margin-bottom:16px; }
@@ -108,6 +127,9 @@
   table{ width:100%; border-collapse:collapse; font-size:13px; }
   th{ text-align:left; padding:11px 14px; color:var(--muted); font-weight:600; white-space:nowrap;
     background:var(--panel2); border-bottom:1px solid var(--border); font-size:10.5px; text-transform:uppercase; letter-spacing:.05em; }
+  th[data-sort]{ cursor:pointer; user-select:none; }
+  th[data-sort]:hover{ color:var(--text); }
+  .sort-ind{ display:inline-block; margin-left:4px; width:8px; color:var(--blauw); }
   td{ padding:12px 14px; border-bottom:1px solid rgba(255,255,255,0.05); vertical-align:middle; }
   tr.rij{ cursor:pointer; }
   tr.rij:hover td{ background:rgba(25,157,217,0.06); }
@@ -245,6 +267,17 @@
 
   <div class="cards" id="stats"></div>
 
+  <div class="layout">
+    <div class="panel">
+      <h2>Fases <span class="hint">(bedrijven per fase)</span></h2>
+      <div class="chart-wrap"><canvas id="stageChart"></canvas></div>
+    </div>
+    <div class="panel">
+      <h2>Vervolgacties <span class="hint">(klik om bedrijf te openen)</span></h2>
+      <ul class="ranklist" id="followupRanklist"></ul>
+    </div>
+  </div>
+
   <div class="filters">
     <input type="text" id="search-input" placeholder="Zoek op bedrijfsnaam…">
     <div class="stage-pills" id="stage-chips"></div>
@@ -269,13 +302,14 @@
       <thead>
         <tr>
           <th style="width:24px"></th>
-          <th>Bedrijf</th>
-          <th>Fase</th>
-          <th>Contacten</th>
+          <th data-sort="name">Bedrijf<span class="sort-ind" data-sort-ind="name"></span></th>
+          <th data-sort="stage">Fase<span class="sort-ind" data-sort-ind="stage"></span></th>
+          <th data-sort="contact_count">Contacten<span class="sort-ind" data-sort-ind="contact_count"></span></th>
+          <th data-sort="next_follow_up">Vervolgdatum<span class="sort-ind" data-sort-ind="next_follow_up"></span></th>
           <th style="width:40px"></th>
         </tr>
       </thead>
-      <tbody id="company-tbody"><tr><td colspan="5"><div class="loading">Gegevens laden…</div></td></tr></tbody>
+      <tbody id="company-tbody"><tr><td colspan="6"><div class="loading">Gegevens laden…</div></td></tr></tbody>
     </table>
   </div>
 </div>
@@ -306,10 +340,12 @@
     stageFilter: "all",
     bellerFilter: "",
     followUpFilter: "",
+    sort: { field: "name", dir: "asc" },
     savedTimers: {}
   };
   var companiesChannel = null;
   var contactsChannel = null;
+  var stageChart = null;
 
   var TEMPLATE_COLUMNS = [
     "Company", "Company LinkedIn", "Fase", "Bedrijfsnotities",
@@ -344,7 +380,112 @@
     renderStats();
     renderChips();
     renderBellerOptions();
+    renderStageChart();
+    renderFollowupRanklist();
+    renderSortIndicators();
     renderTable();
+  }
+
+  function formatDate(iso) {
+    var d = new Date(iso + "T00:00:00");
+    return d.toLocaleDateString("nl-NL", { day: "2-digit", month: "2-digit", year: "numeric" });
+  }
+
+  // The earliest Vervolgdatum among a company's contacts (ISO strings sort
+  // correctly as plain text, so no Date parsing is needed to find the min).
+  function nextFollowUp(companyId) {
+    var dates = (state.contactsByCompany[companyId] || [])
+      .map(function (p) { return p.follow_up_date; })
+      .filter(Boolean);
+    if (!dates.length) return null;
+    dates.sort();
+    return dates[0];
+  }
+
+  function sortValue(c, field) {
+    if (field === "stage") return STAGES.findIndex(function (s) { return s.key === c.stage; });
+    if (field === "contact_count") return c.contact_count || 0;
+    if (field === "next_follow_up") return nextFollowUp(c.id) || "9999-99-99"; // undated sorts last, ascending
+    return (c.name || "").toLowerCase();
+  }
+
+  function sortCompanies(list) {
+    var field = state.sort.field, dir = state.sort.dir;
+    return list.slice().sort(function (a, b) {
+      var av = sortValue(a, field), bv = sortValue(b, field);
+      if (av < bv) return dir === "asc" ? -1 : 1;
+      if (av > bv) return dir === "asc" ? 1 : -1;
+      return (a.name || "").localeCompare(b.name || "");
+    });
+  }
+
+  function renderSortIndicators() {
+    Array.prototype.forEach.call(document.querySelectorAll(".sort-ind"), function (el) {
+      var active = el.getAttribute("data-sort-ind") === state.sort.field;
+      el.textContent = active ? (state.sort.dir === "asc" ? "▲" : "▼") : "";
+    });
+  }
+
+  function renderStageChart() {
+    var canvas = $("#stageChart");
+    if (!canvas || typeof Chart === "undefined") return;
+    var counts = STAGES.map(function (s) { return state.companies.filter(function (c) { return c.stage === s.key; }).length; });
+    var labels = STAGES.map(function (s) { return s.label; });
+    var style = getComputedStyle(document.documentElement);
+    var colors = STAGES.map(function (s) { return style.getPropertyValue(s.color).trim(); });
+    var textColor = style.getPropertyValue("--sub").trim();
+    if (stageChart) {
+      stageChart.data.datasets[0].data = counts;
+      stageChart.update();
+      return;
+    }
+    stageChart = new Chart(canvas.getContext("2d"), {
+      type: "doughnut",
+      data: { labels: labels, datasets: [{ data: counts, backgroundColor: colors, borderWidth: 0 }] },
+      options: {
+        maintainAspectRatio: false,
+        cutout: "62%",
+        plugins: { legend: { position: "right", labels: { color: textColor, boxWidth: 11, font: { family: "'IBM Plex Sans', sans-serif", size: 11 } } } }
+      }
+    });
+  }
+
+  function renderFollowupRanklist() {
+    var items = [];
+    state.companies.forEach(function (c) {
+      (state.contactsByCompany[c.id] || []).forEach(function (p) {
+        if (!p.follow_up_date) return;
+        items.push({
+          companyId: c.id, companyName: c.name, date: p.follow_up_date,
+          contactName: ((p.first_name || "") + " " + (p.last_name || "")).trim() || "(naam onbekend)"
+        });
+      });
+    });
+    items.sort(function (a, b) { return a.date < b.date ? -1 : (a.date > b.date ? 1 : 0); });
+    var shown = items.slice(0, 8);
+    var root = $("#followupRanklist");
+    if (!shown.length) {
+      root.innerHTML = '<li class="empty">Geen geplande vervolgacties.</li>';
+      return;
+    }
+    root.innerHTML = shown.map(function (it) {
+      var status = followUpStatus(it.date);
+      var cls = status === "overdue" ? " fu-overdue" : (status === "week" ? " fu-soon" : "");
+      var d = new Date(it.date + "T00:00:00");
+      var short = d.toLocaleDateString("nl-NL", { day: "2-digit", month: "2-digit" });
+      return '<li data-goto-company="' + it.companyId + '">' +
+        '<span><span class="who">' + esc(it.contactName) + '</span><span class="co">' + esc(it.companyName) + '</span></span>' +
+        '<span class="when tnum' + cls + '">' + esc(short) + '</span></li>';
+    }).join("");
+    Array.prototype.forEach.call(root.querySelectorAll("[data-goto-company]"), function (li) {
+      li.addEventListener("click", function () {
+        var id = li.getAttribute("data-goto-company");
+        state.expandedCompanyId = id;
+        render();
+        var row = document.querySelector('tr.rij[data-toggle="' + id + '"]');
+        if (row) row.scrollIntoView({ behavior: "smooth", block: "center" });
+      });
+    });
   }
 
   function renderBellerOptions() {
@@ -420,12 +561,13 @@
 
   function filteredCompanies() {
     var q = state.search.trim().toLowerCase();
-    return state.companies.filter(function (c) {
+    var list = state.companies.filter(function (c) {
       if (state.stageFilter !== "all" && c.stage !== state.stageFilter) return false;
       if (q && (c.name || "").toLowerCase().indexOf(q) === -1) return false;
       if (!companyMatchesContactFilters(c)) return false;
       return true;
     });
+    return sortCompanies(list);
   }
 
   function stagePillStyle(stage) {
@@ -437,7 +579,7 @@
     var list = filteredCompanies();
     var root = $("#company-tbody");
     if (!list.length) {
-      root.innerHTML = '<tr><td colspan="5"><div class="empty-state">Geen bedrijven gevonden. Pas je zoekopdracht aan of voeg een nieuw bedrijf toe.</div></td></tr>';
+      root.innerHTML = '<tr><td colspan="6"><div class="empty-state">Geen bedrijven gevonden. Pas je zoekopdracht aan of voeg een nieuw bedrijf toe.</div></td></tr>';
       return;
     }
     root.innerHTML = list.map(renderCompanyRows).join("");
@@ -456,10 +598,14 @@
     html += '  <td><div class="company-name-cell"><span class="company-name">' + esc(c.name || "(naam onbekend)") + '</span>' + linkedin + '</div></td>';
     html += '  <td><select class="stage-pill tnum" data-stage-select="' + c.id + '" style="' + stagePillStyle(c.stage) + '" onclick="event.stopPropagation()">' + stageOptions + '</select></td>';
     html += '  <td class="contact-count-cell tnum">' + (c.contact_count || 0) + '</td>';
+    var nextDate = nextFollowUp(c.id);
+    var nextStatus = nextDate ? followUpStatus(nextDate) : "";
+    var nextCls = nextStatus === "overdue" ? " fu-overdue" : (nextStatus === "week" ? " fu-soon" : "");
+    html += '  <td class="tnum' + nextCls + '">' + (nextDate ? esc(formatDate(nextDate)) : '<span style="color:var(--dim)">—</span>') + '</td>';
     html += '  <td class="actions-cell"><button class="icon-btn danger" data-delete-company="' + c.id + '" title="Bedrijf verwijderen" onclick="event.stopPropagation()"><svg width="14" height="14" viewBox="0 0 15 15" fill="none"><path d="M2.5 4H12.5M5.5 4V2.8C5.5 2.3 5.9 2 6.3 2H8.7C9.1 2 9.5 2.3 9.5 2.8V4M6 6.5V11M9 6.5V11M3.5 4L4 12C4 12.5 4.4 13 5 13H10C10.6 13 11 12.5 11 12L11.5 4" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/></svg></button></td>';
     html += '</tr>';
     if (isOpen) {
-      html += '<tr class="detail"><td colspan="5"><div class="detail-inner">' + renderCompanyDetail(c) + '</div></td></tr>';
+      html += '<tr class="detail"><td colspan="6"><div class="detail-inner">' + renderCompanyDetail(c) + '</div></td></tr>';
     }
     return html;
   }
@@ -509,11 +655,9 @@
   function followUpFieldBlock(dateStr) {
     if (!dateStr) return fieldBlock("Vervolgdatum", "");
     var status = followUpStatus(dateStr);
-    var d = new Date(dateStr + "T00:00:00");
-    var formatted = d.toLocaleDateString("nl-NL", { day: "2-digit", month: "2-digit", year: "numeric" });
     var suffix = status === "overdue" ? " · verlopen" : (status === "week" ? " · binnenkort" : "");
     var cls = status === "overdue" ? " fu-overdue" : (status === "week" ? " fu-soon" : "");
-    return '<div class="cf"><span class="k">Vervolgdatum</span><span class="v tnum' + cls + '">' + esc(formatted + suffix) + '</span></div>';
+    return '<div class="cf"><span class="k">Vervolgdatum</span><span class="v tnum' + cls + '">' + esc(formatDate(dateStr) + suffix) + '</span></div>';
   }
 
   function renderContactCard(companyId, p) {
@@ -676,7 +820,7 @@
     if (!confirm("Dit bedrijf en al zijn contactpersonen verwijderen?")) return;
     supabase.from("companies").delete().eq("id", id).then(function (res) {
       if (res.error) { console.error(res.error); toast("Verwijderen mislukt"); return; }
-      if (state.expandedCompanyId === id) { state.expandedCompanyId = null; unsubscribeContacts(); }
+      if (state.expandedCompanyId === id) state.expandedCompanyId = null;
       toast("Bedrijf verwijderd");
     });
   }
@@ -1059,6 +1203,19 @@
   $("#followup-filter").addEventListener("change", function (e) {
     state.followUpFilter = e.target.value;
     renderTable();
+  });
+  Array.prototype.forEach.call(document.querySelectorAll("th[data-sort]"), function (th) {
+    th.addEventListener("click", function () {
+      var field = th.getAttribute("data-sort");
+      if (state.sort.field === field) {
+        state.sort.dir = state.sort.dir === "asc" ? "desc" : "asc";
+      } else {
+        state.sort.field = field;
+        state.sort.dir = "asc";
+      }
+      renderSortIndicators();
+      renderTable();
+    });
   });
   $("#btn-template").addEventListener("click", downloadTemplate);
   $("#btn-export").addEventListener("click", exportData);

@@ -61,6 +61,3 @@ def main(in_path_str, out_path_str):
     rows = migrate(df)
     write_output(rows, out_path)
 
-
-if __name__ == "__main__":
-    main()
