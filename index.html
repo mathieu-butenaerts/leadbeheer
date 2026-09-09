@@ -99,6 +99,7 @@
   .ranklist li:hover{ background:rgba(255,255,255,0.05); }
   .ranklist .who{ display:block; font-size:12.5px; color:var(--sub); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
   .ranklist .co{ display:block; font-size:11px; color:var(--dim); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .ranklist .co .beller{ color:var(--blauw-l); font-weight:600; }
   .ranklist .when{ flex:none; font-size:11.5px; font-weight:700; color:var(--muted); }
   .ranklist .empty{ color:var(--dim); font-style:italic; font-size:12.5px; padding:8px; cursor:default; }
   .ranklist .empty:hover{ background:none; }
@@ -457,7 +458,8 @@
         if (!p.follow_up_date) return;
         items.push({
           companyId: c.id, companyName: c.name, date: p.follow_up_date,
-          contactName: ((p.first_name || "") + " " + (p.last_name || "")).trim() || "(naam onbekend)"
+          contactName: ((p.first_name || "") + " " + (p.last_name || "")).trim() || "(naam onbekend)",
+          beller: (p.beller || "").trim()
         });
       });
     });
@@ -473,8 +475,9 @@
       var cls = status === "overdue" ? " fu-overdue" : (status === "week" ? " fu-soon" : "");
       var d = new Date(it.date + "T00:00:00");
       var short = d.toLocaleDateString("nl-NL", { day: "2-digit", month: "2-digit" });
+      var coLine = esc(it.companyName) + (it.beller ? ' <span class="beller">· ' + esc(it.beller) + '</span>' : '');
       return '<li data-goto-company="' + it.companyId + '">' +
-        '<span><span class="who">' + esc(it.contactName) + '</span><span class="co">' + esc(it.companyName) + '</span></span>' +
+        '<span><span class="who">' + esc(it.contactName) + '</span><span class="co">' + coLine + '</span></span>' +
         '<span class="when tnum' + cls + '">' + esc(short) + '</span></li>';
     }).join("");
     Array.prototype.forEach.call(root.querySelectorAll("[data-goto-company]"), function (li) {
