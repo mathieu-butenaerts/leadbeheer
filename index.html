@@ -223,6 +223,7 @@
         <svg width="13" height="13" viewBox="0 0 15 15" fill="none"><path d="M7.5 2V13M2 7.5H13" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
         Nieuw bedrijf
       </button>
+      <a class="btn btn-quiet" id="adminLink" href="https://kloos1123.github.io/Scrappingtool-v2/admin.html" target="_blank" rel="noopener noreferrer" style="display:none;text-decoration:none">Beheer (Marktmonitor)</a>
       <button class="btn btn-quiet" id="btn-logout">Uitloggen</button>
     </div>
   </div>
@@ -719,6 +720,8 @@
   (async function boot() {
     var profile = await window.requireUser();
     if (!profile) return; // requireUser already redirected to login.html
+
+    if (profile.role === "admin") $("#adminLink").style.display = "inline-flex";
 
     supabase.from("companies").select("*").order("name").then(function (res) {
       if (res.error) {
