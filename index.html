@@ -451,12 +451,12 @@
     html += '  </div>';
 
     html += '  <div class="contact-grid">';
-    html += fieldBlock("E-mail", p.email, { link: true, mailto: true, mono: true });
-    html += fieldBlock("E-mail 2", p.email2, { link: true, mailto: true, mono: true });
-    html += fieldBlock("Mobiel", p.mobile_phone, { link: true, tel: true, mono: true });
-    html += fieldBlock("Vast", p.work_phone, { link: true, tel: true, mono: true });
-    html += fieldBlock("Beller", p.beller);
-    html += fieldBlock("Vervolg", p.vervolg);
+    html += fieldBlock("E-mail ", p.email, { link: true, mailto: true, mono: true });
+    html += fieldBlock("E-mail 2 ", p.email2, { link: true, mailto: true, mono: true });
+    html += fieldBlock("Mobiel ", p.mobile_phone, { link: true, tel: true, mono: true });
+    html += fieldBlock("Vast ", p.work_phone, { link: true, tel: true, mono: true });
+    html += fieldBlock("Beller ", p.beller);
+    html += fieldBlock("Vervolg ", p.vervolg);
     html += '  </div>';
 
     if (p.hook) {
