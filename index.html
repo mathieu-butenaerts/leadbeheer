@@ -1,0 +1,755 @@
+<!DOCTYPE html>
+<html lang="nl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Leadbeheer</title>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="auth.js"></script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@500;600;700&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+<style>
+  :root{
+    --bg1:#101b28; --bg2:#14212f; --bg3:#192738;
+    --panel:#1b2b3d; --panel2:#22344a; --border:#2a3a4d;
+    --blauw:#199DD9; --blauw-l:#4ab8e6; --indigo:#11448D; --violet:#83007D; --magenta:#E9167D;
+    --text:#eef3f8; --sub:#cfe0f0; --muted:#8ea2b8; --dim:#5f7690;
+
+    --stage-nieuw:#8ea2b8; --stage-nieuw-bg:rgba(142,162,184,0.14);
+    --stage-gecontacteerd:#199DD9; --stage-gecontacteerd-bg:rgba(25,157,217,0.14);
+    --stage-gekwalificeerd:#c060b8; --stage-gekwalificeerd-bg:rgba(131,0,125,0.20);
+    --stage-gewonnen:#2fbf7a; --stage-gewonnen-bg:rgba(47,191,122,0.14);
+    --stage-verloren:#E9167D; --stage-verloren-bg:rgba(233,22,125,0.14);
+
+    color-scheme: dark;
+  }
+  *{ box-sizing:border-box; }
+  html,body{ margin:0; padding:0; }
+  body{
+    font-family:'IBM Plex Sans',sans-serif; color:var(--text); font-size:14px;
+    -webkit-font-smoothing:antialiased;
+    background:
+      radial-gradient(1200px circle at 88% -8%, rgba(25,157,217,0.14), transparent 55%),
+      radial-gradient(900px circle at -5% 8%, rgba(17,68,141,0.20), transparent 55%),
+      linear-gradient(180deg,var(--bg1) 0%,var(--bg2) 55%,var(--bg3) 100%);
+    background-attachment:fixed;
+  }
+  a{ color:var(--blauw); }
+  a:hover{ color:var(--magenta); }
+  h1,h2,h3,.display{ font-family:'Archivo',sans-serif; text-wrap:balance; }
+  .tnum{ font-variant-numeric:tabular-nums; }
+  button{ font-family:inherit; }
+  button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-visible{
+    outline:2px solid var(--blauw); outline-offset:2px;
+  }
+  ::-webkit-scrollbar{ width:10px; height:10px; }
+  ::-webkit-scrollbar-track{ background:transparent; }
+  ::-webkit-scrollbar-thumb{ background:var(--border); border-radius:6px; }
+  @keyframes pulseGlow{ 0%{opacity:1;} 50%{opacity:.35;} 100%{opacity:1;} }
+  @keyframes fadeInUp{ from{opacity:0;transform:translateY(8px);} to{opacity:1;transform:translateY(0);} }
+
+  .shell{ max-width:1200px; margin:0 auto; padding:28px 32px 70px; display:flex; flex-direction:column; }
+
+  /* ---- topbar ---- */
+  .topbar{ display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:16px;
+    padding-bottom:20px; margin-bottom:22px; border-bottom:1px solid rgba(255,255,255,0.08); }
+  .brand{ display:flex; align-items:center; gap:16px; }
+  .wordmark{ display:flex; align-items:center; gap:9px; }
+  .wordmark .wm-text{ font-family:'Archivo',sans-serif; font-size:20px; color:var(--blauw); font-weight:500; line-height:1; }
+  .wordmark .wm-text b{ color:var(--text); font-weight:700; }
+  .title-block{ padding-left:16px; border-left:1px solid rgba(255,255,255,0.12); }
+  .title-block h1{ font-size:17px; font-weight:600; margin:0; line-height:1.1; }
+  .title-block .subtitle{ font-size:11px; color:var(--dim); margin-top:4px; letter-spacing:.05em; text-transform:uppercase; }
+  .topmeta{ display:flex; align-items:center; gap:14px; flex-wrap:wrap; }
+  .live{ display:flex; align-items:center; gap:8px; font-size:12px; color:var(--muted); }
+  .live .dot{ width:8px; height:8px; border-radius:50%; background:var(--blauw-l); display:inline-block; animation:pulseGlow 2s infinite; }
+  .live .dot.off{ background:var(--dim); animation:none; }
+  .btn{ font-size:12.5px; font-weight:600; padding:9px 16px; border-radius:8px; border:1px solid rgba(25,157,217,0.4);
+    background:rgba(25,157,217,0.10); color:var(--blauw); cursor:pointer; white-space:nowrap; display:inline-flex; align-items:center; gap:7px;
+    text-decoration:none; }
+  .btn:hover{ background:rgba(25,157,217,0.18); color:var(--blauw); }
+  .btn-quiet{ border-color:var(--border); background:var(--panel2); color:var(--sub); }
+  .btn-quiet:hover{ border-color:var(--blauw); color:var(--text); }
+  .btn[disabled]{ opacity:.45; cursor:not-allowed; }
+  .icon-btn{ background:none; border:none; color:var(--dim); cursor:pointer; padding:5px; border-radius:6px; display:flex; }
+  .icon-btn:hover{ color:var(--text); background:rgba(255,255,255,0.06); }
+  .icon-btn.danger:hover{ color:var(--magenta); }
+
+  /* ---- banner ---- */
+  .banner{ display:flex; align-items:center; gap:12px; background:rgba(233,22,125,0.10); border:1px solid rgba(233,22,125,0.35);
+    border-radius:12px; padding:10px 14px; margin-bottom:18px; font-size:12.5px; color:#f0b6cf; }
+  .banner .lbl{ font-size:11px; font-weight:700; color:var(--magenta); white-space:nowrap; letter-spacing:.05em; }
+  .banner span.msg{ flex:1; }
+  .banner button{ border:none; background:none; color:var(--muted); cursor:pointer; font-size:16px; line-height:1; padding:0 4px; }
+
+  /* ---- kpi cards ---- */
+  .cards{ display:grid; grid-template-columns:repeat(4,1fr); gap:14px; margin-bottom:20px; }
+  .card{ background:var(--panel); border:1px solid var(--border); border-radius:14px; padding:16px 18px; animation:fadeInUp .4s ease both; }
+  .card .label{ font-size:11px; color:var(--muted); text-transform:uppercase; letter-spacing:.06em; margin-bottom:8px; }
+  .card .value{ font-family:'Archivo',sans-serif; font-size:30px; font-weight:700; line-height:1; }
+  .card .sub{ font-size:11px; color:var(--dim); margin-top:6px; }
+  .card.accent{ background:rgba(25,157,217,0.08); border-color:rgba(25,157,217,0.35); }
+  .card.accent .value{ color:var(--blauw); }
+  .card.won .value{ color:var(--stage-gewonnen); }
+
+  /* ---- filters ---- */
+  .filters{ display:flex; flex-wrap:wrap; gap:12px; align-items:center; background:var(--panel); border:1px solid var(--border);
+    border-radius:14px; padding:14px 16px; margin-bottom:16px; }
+  .filters input[type=text]{ font-family:inherit; font-size:12.5px; padding:9px 12px; border-radius:8px; border:1px solid var(--border);
+    background:var(--bg2); color:var(--text); min-width:240px; }
+  .filters input[type=text]:focus{ outline:2px solid var(--blauw); outline-offset:1px; }
+  .stage-pills{ display:flex; flex-wrap:wrap; gap:8px; }
+  .stage-pill-btn{ font-size:12px; font-weight:600; padding:7px 14px; border-radius:999px; cursor:pointer;
+    background:rgba(255,255,255,0.04); color:var(--muted); border:1px solid rgba(255,255,255,0.1); }
+  .stage-pill-btn:hover{ color:var(--text); }
+  .stage-pill-btn.active{ background:rgba(25,157,217,0.18); color:var(--blauw); border-color:rgba(25,157,217,0.45); }
+
+  /* ---- table ---- */
+  .table-wrap{ border:1px solid var(--border); border-radius:14px; background:var(--panel); overflow:hidden; }
+  table{ width:100%; border-collapse:collapse; font-size:13px; }
+  th{ text-align:left; padding:11px 14px; color:var(--muted); font-weight:600; white-space:nowrap;
+    background:var(--panel2); border-bottom:1px solid var(--border); font-size:10.5px; text-transform:uppercase; letter-spacing:.05em; }
+  td{ padding:12px 14px; border-bottom:1px solid rgba(255,255,255,0.05); vertical-align:middle; }
+  tr.rij{ cursor:pointer; }
+  tr.rij:hover td{ background:rgba(25,157,217,0.06); }
+  tr.rij.open td{ background:rgba(25,157,217,0.10); }
+  tr.rij:last-child td, tr.detail:last-child td{ border-bottom:none; }
+  .chev{ width:9px; height:9px; display:inline-flex; transition:transform .15s ease; color:var(--dim); }
+  tr.open .chev{ transform:rotate(90deg); color:var(--blauw); }
+  .company-name-cell{ display:flex; align-items:center; gap:10px; min-width:0; }
+  .company-name{ font-weight:600; color:var(--text); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width:280px; }
+  .li-link{ color:var(--dim); display:inline-flex; flex:none; }
+  .li-link:hover{ color:var(--blauw); }
+  .contact-count-cell{ color:var(--muted); }
+  .actions-cell{ text-align:right; }
+
+  .stage-pill{ appearance:none; -webkit-appearance:none; border:none; border-radius:999px; padding:5px 26px 5px 12px;
+    font-size:11px; font-weight:700; text-transform:uppercase; letter-spacing:.03em; cursor:pointer;
+    background-repeat:no-repeat; background-position:right 10px center;
+    background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='8' height='8' viewBox='0 0 8 8'%3E%3Cpath d='M1 3L4 6L7 3' stroke='%238ea2b8' stroke-width='1.3' fill='none' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E"); }
+
+  tr.detail td{ background:var(--bg2); border-bottom:1px solid var(--border); padding:0; }
+  .detail-inner{ padding:18px 20px; display:grid; grid-template-columns:270px 1fr; gap:22px; }
+  @media (max-width:800px){ .detail-inner{ grid-template-columns:1fr; } }
+
+  .field-label{ font-size:10.5px; font-weight:700; text-transform:uppercase; letter-spacing:.05em; color:var(--dim); margin-bottom:6px; display:block; }
+  .meta-col{ display:flex; flex-direction:column; gap:16px; }
+  .meta-block textarea, .meta-block input{ width:100%; border:1px solid var(--border); background:var(--panel); color:var(--text);
+    border-radius:8px; padding:9px 10px; font-size:12.5px; font-family:inherit; resize:vertical; }
+  .meta-block textarea{ min-height:90px; }
+  .save-hint{ font-size:11px; color:var(--dim); margin-top:5px; }
+
+  .contacts-col{ display:flex; flex-direction:column; gap:10px; min-width:0; }
+  .contacts-head{ display:flex; align-items:center; justify-content:space-between; }
+  .contacts-head h3{ font-size:11px; margin:0; color:var(--muted); text-transform:uppercase; letter-spacing:.05em; font-weight:700; }
+  .empty-note{ color:var(--dim); font-style:italic; font-size:12.5px; padding:10px 0; }
+
+  .contact-card{ border:1px solid var(--border); background:var(--panel); border-radius:10px; padding:13px 15px; display:flex; flex-direction:column; gap:10px; }
+  .contact-head{ display:flex; align-items:center; justify-content:space-between; gap:10px; }
+  .contact-name{ font-weight:600; font-size:13.5px; display:flex; align-items:center; gap:8px; color:var(--text); }
+  .gender-badge{ font-size:10px; font-weight:700; color:var(--muted); background:var(--panel2); border:1px solid var(--border); border-radius:5px; padding:1px 5px; }
+  .contact-actions{ display:flex; gap:2px; }
+
+  .contact-grid{ display:grid; grid-template-columns:repeat(2,1fr); gap:8px 18px; font-size:12.5px; }
+  @media (max-width:520px){ .contact-grid{ grid-template-columns:1fr; } }
+  .cf .k{ color:var(--dim); font-size:10px; text-transform:uppercase; letter-spacing:.04em; }
+  .cf .v{ color:var(--sub); word-break:break-word; }
+  .cf .v.empty-val{ color:var(--dim); font-style:italic; }
+  .cf a.v{ color:var(--sub); text-decoration:none; }
+  .cf a.v:hover{ color:var(--blauw); text-decoration:underline; }
+
+  .hook-box{ background:rgba(131,0,125,0.14); border:1px solid rgba(131,0,125,0.35); border-radius:8px; padding:8px 10px;
+    font-size:12.5px; color:#dda9d8; display:flex; gap:8px; }
+  .hook-box svg{ flex:none; margin-top:2px; color:var(--violet); }
+  .notes-grid{ display:grid; grid-template-columns:1fr 1fr; gap:10px; font-size:12.5px; }
+  @media (max-width:520px){ .notes-grid{ grid-template-columns:1fr; } }
+  .notes-grid .k{ color:var(--dim); font-size:10px; text-transform:uppercase; letter-spacing:.04em; display:block; margin-bottom:3px; }
+  .notes-grid .v{ color:var(--sub); }
+
+  .add-contact-row{ display:flex; justify-content:flex-start; }
+
+  .empty-state{ text-align:center; color:var(--muted); padding:48px 20px; font-size:13px; }
+  .loading{ text-align:center; color:var(--muted); padding:60px 20px; }
+  .error{ padding:20px; text-align:center; color:#f0b6cf; background:var(--panel); border:1px solid rgba(233,22,125,0.35); border-radius:14px; margin-bottom:16px; }
+
+  /* ---- modal ---- */
+  .modal-overlay{ position:fixed; inset:0; background:rgba(6,10,15,0.6); display:flex; align-items:center; justify-content:center; padding:20px; z-index:50; }
+  .modal{ background:var(--panel); border:1px solid var(--border); border-radius:14px; box-shadow:0 20px 60px rgba(0,0,0,0.5);
+    width:100%; max-width:480px; max-height:88vh; overflow-y:auto; padding:22px; display:flex; flex-direction:column; gap:14px; }
+  .modal h2{ margin:0; font-size:17px; color:var(--text); }
+  .form-grid{ display:grid; grid-template-columns:1fr 1fr; gap:12px; }
+  .form-field{ display:flex; flex-direction:column; gap:5px; }
+  .form-field.full{ grid-column:1/-1; }
+  .form-field label{ font-size:11.5px; font-weight:600; color:var(--muted); }
+  .form-field input, .form-field select, .form-field textarea{ border:1px solid var(--border); background:var(--bg2); color:var(--text);
+    border-radius:7px; padding:8px 10px; font-size:13px; font-family:inherit; width:100%; }
+  .form-field textarea{ min-height:58px; resize:vertical; }
+  .modal-actions{ display:flex; justify-content:flex-end; gap:8px; margin-top:4px; }
+
+  .toast{ position:fixed; bottom:20px; left:50%; transform:translateX(-50%); background:var(--panel2); border:1px solid var(--border);
+    color:var(--text); padding:9px 16px; border-radius:8px; font-size:13px; box-shadow:0 10px 30px rgba(0,0,0,0.4); z-index:60;
+    opacity:0; pointer-events:none; transition:opacity .2s ease; }
+  .toast.show{ opacity:1; }
+
+  @media (max-width:900px){ .cards{ grid-template-columns:repeat(2,1fr); } }
+  @media (max-width:640px){
+    .table-wrap{ overflow-x:auto; }
+    table{ min-width:640px; }
+  }
+</style>
+</head>
+<body>
+
+<div class="shell">
+  <div class="topbar">
+    <div class="brand">
+      <span class="wordmark">
+        <svg width="38" height="31" viewBox="0 0 42 34" aria-hidden="true">
+          <polygon points="5,2 22,2 17,13 0,13" fill="#83007D"></polygon>
+          <rect x="2" y="15" width="15" height="15" rx="2" fill="#11448D"></rect>
+          <rect x="19" y="17" width="12" height="13" rx="2" fill="#199DD9"></rect>
+        </svg>
+        <span class="wm-text"><b>pro</b>fource</span>
+      </span>
+      <div class="title-block">
+        <h1>Leadbeheer</h1>
+        <div class="subtitle">Verkoop · bedrijven &amp; contactpersonen</div>
+      </div>
+    </div>
+    <div class="topmeta">
+      <div class="live"><span class="dot" id="liveDot"></span><span id="liveText">Verbinden…</span></div>
+      <button class="btn" id="btn-add-company">
+        <svg width="13" height="13" viewBox="0 0 15 15" fill="none"><path d="M7.5 2V13M2 7.5H13" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
+        Nieuw bedrijf
+      </button>
+      <button class="btn btn-quiet" id="btn-logout">Uitloggen</button>
+    </div>
+  </div>
+
+  <div id="errorBox" class="error" style="display:none"></div>
+
+  <div class="banner" id="sample-banner">
+    <span class="lbl">VOORBEELD</span>
+    <span class="msg">Dit zijn voorbeeldgegevens uit de schema-migratie. Voeg je eigen bedrijven toe of verwijder de voorbeelden wanneer je klaar bent.</span>
+    <button id="banner-close" aria-label="Sluiten" title="Sluiten">×</button>
+  </div>
+
+  <div class="cards" id="stats"></div>
+
+  <div class="filters">
+    <input type="text" id="search-input" placeholder="Zoek op bedrijfsnaam…">
+    <div class="stage-pills" id="stage-chips"></div>
+  </div>
+
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th style="width:24px"></th>
+          <th>Bedrijf</th>
+          <th>Fase</th>
+          <th>Contacten</th>
+          <th style="width:40px"></th>
+        </tr>
+      </thead>
+      <tbody id="company-tbody"><tr><td colspan="5"><div class="loading">Gegevens laden…</div></td></tr></tbody>
+    </table>
+  </div>
+</div>
+
+<div id="modal-root"></div>
+<div class="toast" id="toast"></div>
+
+<script>
+(function () {
+  "use strict";
+
+  var STAGES = [
+    { key: "nieuw",          label: "Nieuw",          color: "--stage-nieuw",          bg: "--stage-nieuw-bg" },
+    { key: "gecontacteerd",  label: "Gecontacteerd",  color: "--stage-gecontacteerd",  bg: "--stage-gecontacteerd-bg" },
+    { key: "gekwalificeerd", label: "Gekwalificeerd", color: "--stage-gekwalificeerd", bg: "--stage-gekwalificeerd-bg" },
+    { key: "gewonnen",       label: "Gewonnen",       color: "--stage-gewonnen",       bg: "--stage-gewonnen-bg" },
+    { key: "verloren",       label: "Verloren",       color: "--stage-verloren",       bg: "--stage-verloren-bg" }
+  ];
+  function stageInfo(key) {
+    return STAGES.find(function (s) { return s.key === key; }) || STAGES[0];
+  }
+
+  var state = {
+    companies: [],
+    contactsByCompany: {},
+    contactChannel: null,
+    expandedCompanyId: null,
+    search: "",
+    stageFilter: "all",
+    savedTimers: {}
+  };
+  var companiesChannel = null;
+
+  function $(sel, root) { return (root || document).querySelector(sel); }
+  function esc(s) {
+    return String(s == null ? "" : s).replace(/[&<>"']/g, function (c) {
+      return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c];
+    });
+  }
+  function toast(msg) {
+    var el = $("#toast");
+    el.textContent = msg;
+    el.classList.add("show");
+    clearTimeout(toast._t);
+    toast._t = setTimeout(function () { el.classList.remove("show"); }, 2200);
+  }
+  function showError(msg) {
+    var box = $("#errorBox");
+    box.textContent = msg;
+    box.style.display = "block";
+  }
+
+  // ---------- rendering ----------
+
+  function render() {
+    renderStats();
+    renderChips();
+    renderTable();
+  }
+
+  function renderStats() {
+    var total = state.companies.length;
+    var totalContacts = state.companies.reduce(function (a, c) { return a + (c.contact_count || 0); }, 0);
+    var active = state.companies.filter(function (c) { return c.stage !== "gewonnen" && c.stage !== "verloren"; }).length;
+    var won = state.companies.filter(function (c) { return c.stage === "gewonnen"; }).length;
+    var items = [
+      { n: total, l: "Bedrijven", cls: "" },
+      { n: totalContacts, l: "Contactpersonen", cls: "" },
+      { n: active, l: "Actieve leads", cls: "accent" },
+      { n: won, l: "Gewonnen", cls: "won" }
+    ];
+    $("#stats").innerHTML = items.map(function (it) {
+      return '<div class="card ' + it.cls + '"><div class="label">' + esc(it.l) + '</div><div class="value tnum">' + it.n + '</div></div>';
+    }).join("");
+  }
+
+  function renderChips() {
+    var counts = {};
+    state.companies.forEach(function (c) { counts[c.stage] = (counts[c.stage] || 0) + 1; });
+    var chips = [{ key: "all", label: "Alle (" + state.companies.length + ")" }].concat(
+      STAGES.map(function (s) { return { key: s.key, label: s.label + " (" + (counts[s.key] || 0) + ")" }; })
+    );
+    $("#stage-chips").innerHTML = chips.map(function (c) {
+      return '<button class="stage-pill-btn' + (state.stageFilter === c.key ? " active" : "") + '" data-stage="' + c.key + '">' + esc(c.label) + '</button>';
+    }).join("");
+    Array.prototype.forEach.call($("#stage-chips").querySelectorAll(".stage-pill-btn"), function (btn) {
+      btn.addEventListener("click", function () {
+        state.stageFilter = btn.getAttribute("data-stage");
+        render();
+      });
+    });
+  }
+
+  function filteredCompanies() {
+    var q = state.search.trim().toLowerCase();
+    return state.companies.filter(function (c) {
+      if (state.stageFilter !== "all" && c.stage !== state.stageFilter) return false;
+      if (q && (c.name || "").toLowerCase().indexOf(q) === -1) return false;
+      return true;
+    });
+  }
+
+  function stagePillStyle(stage) {
+    var s = stageInfo(stage);
+    return 'background:var(' + s.bg + ');color:var(' + s.color + ')';
+  }
+
+  function renderTable() {
+    var list = filteredCompanies();
+    var root = $("#company-tbody");
+    if (!list.length) {
+      root.innerHTML = '<tr><td colspan="5"><div class="empty-state">Geen bedrijven gevonden. Pas je zoekopdracht aan of voeg een nieuw bedrijf toe.</div></td></tr>';
+      return;
+    }
+    root.innerHTML = list.map(renderCompanyRows).join("");
+    attachHandlers(root);
+  }
+
+  function renderCompanyRows(c) {
+    var isOpen = state.expandedCompanyId === c.id;
+    var linkedin = c.linkedin ? '<a class="li-link" href="' + esc(c.linkedin) + '" target="_blank" rel="noopener noreferrer" title="LinkedIn" onclick="event.stopPropagation()"><svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M20.45 20.45h-3.55v-5.57c0-1.33-.02-3.04-1.85-3.04-1.86 0-2.14 1.45-2.14 2.94v5.67H9.36V9h3.41v1.56h.05c.48-.9 1.64-1.85 3.38-1.85 3.6 0 4.27 2.37 4.27 5.46v6.28zM5.34 7.43a2.06 2.06 0 1 1 0-4.12 2.06 2.06 0 0 1 0 4.12zM7.11 20.45H3.56V9h3.55v11.45z"/></svg></a>' : "";
+    var stageOptions = STAGES.map(function (st) {
+      return '<option value="' + st.key + '"' + (st.key === c.stage ? " selected" : "") + '>' + esc(st.label) + '</option>';
+    }).join("");
+    var html = '';
+    html += '<tr class="rij' + (isOpen ? ' open' : '') + '" data-toggle="' + c.id + '">';
+    html += '  <td><span class="chev"><svg width="9" height="9" viewBox="0 0 10 10" fill="none"><path d="M2 1L7.5 5L2 9" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg></span></td>';
+    html += '  <td><div class="company-name-cell"><span class="company-name">' + esc(c.name || "(naam onbekend)") + '</span>' + linkedin + '</div></td>';
+    html += '  <td><select class="stage-pill tnum" data-stage-select="' + c.id + '" style="' + stagePillStyle(c.stage) + '" onclick="event.stopPropagation()">' + stageOptions + '</select></td>';
+    html += '  <td class="contact-count-cell tnum">' + (c.contact_count || 0) + '</td>';
+    html += '  <td class="actions-cell"><button class="icon-btn danger" data-delete-company="' + c.id + '" title="Bedrijf verwijderen" onclick="event.stopPropagation()"><svg width="14" height="14" viewBox="0 0 15 15" fill="none"><path d="M2.5 4H12.5M5.5 4V2.8C5.5 2.3 5.9 2 6.3 2H8.7C9.1 2 9.5 2.3 9.5 2.8V4M6 6.5V11M9 6.5V11M3.5 4L4 12C4 12.5 4.4 13 5 13H10C10.6 13 11 12.5 11 12L11.5 4" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/></svg></button></td>';
+    html += '</tr>';
+    if (isOpen) {
+      html += '<tr class="detail"><td colspan="5"><div class="detail-inner">' + renderCompanyDetail(c) + '</div></td></tr>';
+    }
+    return html;
+  }
+
+  function renderCompanyDetail(c) {
+    var contacts = state.contactsByCompany[c.id] || [];
+    var html = '';
+
+    html += '<div class="meta-col">';
+    html += '  <div class="meta-block">';
+    html += '    <span class="field-label">Bedrijfsnotities</span>';
+    html += '    <textarea data-company-notes="' + c.id + '" placeholder="Algemene notities over dit bedrijf…">' + esc(c.notes || "") + '</textarea>';
+    html += '    <div class="save-hint" data-notes-hint="' + c.id + '">Wijzigingen worden automatisch opgeslagen</div>';
+    html += '  </div>';
+    html += '  <div class="meta-block">';
+    html += '    <span class="field-label">Company LinkedIn</span>';
+    html += '    <input type="text" data-company-linkedin="' + c.id + '" placeholder="https://linkedin.com/company/…" value="' + esc(c.linkedin || "") + '">';
+    html += '  </div>';
+    html += '</div>';
+
+    html += '<div class="contacts-col">';
+    html += '  <div class="contacts-head"><h3>Contactpersonen</h3></div>';
+    if (!contacts.length) {
+      html += '<div class="empty-note">Nog geen contactpersonen voor dit bedrijf.</div>';
+    } else {
+      contacts.forEach(function (p) { html += renderContactCard(c.id, p); });
+    }
+    html += '  <div class="add-contact-row"><button class="btn btn-quiet" data-add-contact="' + c.id + '">+ Contactpersoon toevoegen</button></div>';
+    html += '</div>';
+
+    return html;
+  }
+
+  function fieldBlock(label, value, opts) {
+    opts = opts || {};
+    var empty = !value;
+    var content;
+    if (opts.link && value) {
+      var href = opts.mailto ? "mailto:" + value : (opts.tel ? "tel:" + value.replace(/[^+\d]/g, "") : value);
+      content = '<a class="v tnum" href="' + esc(href) + '">' + esc(value) + '</a>';
+    } else {
+      content = '<span class="v' + (empty ? " empty-val" : (opts.mono ? " tnum" : "")) + '">' + esc(value || "—") + '</span>';
+    }
+    return '<div class="cf"><span class="k">' + esc(label) + '</span>' + content + '</div>';
+  }
+
+  function renderContactCard(companyId, p) {
+    var html = '<div class="contact-card" data-contact-id="' + p.id + '">';
+    html += '  <div class="contact-head">';
+    html += '    <div class="contact-name">' + esc(((p.first_name || "") + " " + (p.last_name || "")).trim() || "(naam onbekend)");
+    if (p.gender) html += ' <span class="gender-badge">' + esc(p.gender) + '</span>';
+    html += '    </div>';
+    html += '    <div class="contact-actions">';
+    html += '      <button class="icon-btn" data-edit-contact="' + companyId + '|' + p.id + '" title="Bewerken"><svg width="14" height="14" viewBox="0 0 15 15" fill="none"><path d="M11.5 2.5L12.5 3.5L4.5 11.5L2 12L2.5 9.5L10.5 1.5L11.5 2.5Z" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/></svg></button>';
+    html += '      <button class="icon-btn danger" data-delete-contact="' + companyId + '|' + p.id + '" title="Verwijderen"><svg width="14" height="14" viewBox="0 0 15 15" fill="none"><path d="M2.5 4H12.5M5.5 4V2.8C5.5 2.3 5.9 2 6.3 2H8.7C9.1 2 9.5 2.3 9.5 2.8V4M6 6.5V11M9 6.5V11M3.5 4L4 12C4 12.5 4.4 13 5 13H10C10.6 13 11 12.5 11 12L11.5 4" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/></svg></button>';
+    html += '    </div>';
+    html += '  </div>';
+
+    html += '  <div class="contact-grid">';
+    html += fieldBlock("E-mail", p.email, { link: true, mailto: true, mono: true });
+    html += fieldBlock("E-mail 2", p.email2, { link: true, mailto: true, mono: true });
+    html += fieldBlock("Mobiel", p.mobile_phone, { link: true, tel: true, mono: true });
+    html += fieldBlock("Vast", p.work_phone, { link: true, tel: true, mono: true });
+    html += fieldBlock("Beller", p.beller);
+    html += fieldBlock("Vervolg", p.vervolg);
+    html += '  </div>';
+
+    if (p.hook) {
+      html += '<div class="hook-box"><svg width="14" height="14" viewBox="0 0 15 15" fill="none" style="flex:none"><path d="M7.5 1.5C4.5 1.5 3 3.8 3 6c0 1.9 1.1 2.9 1.7 3.7.4.5.6.9.6 1.3v.5h4.4v-.5c0-.4.2-.8.6-1.3.6-.8 1.7-1.8 1.7-3.7 0-2.2-1.5-4.5-4.5-4.5z" stroke="currentColor" stroke-width="1.2"/><path d="M6 13.5h3" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/></svg><span><strong>Hook:</strong> ' + esc(p.hook) + '</span></div>';
+    }
+
+    var hasNotes = p.notities || p.belaantekeningen;
+    if (hasNotes) {
+      html += '<div class="notes-grid">';
+      if (p.notities) html += '<div><span class="k">Notities</span><span class="v">' + esc(p.notities) + '</span></div>';
+      if (p.belaantekeningen) html += '<div><span class="k">Belaantekeningen</span><span class="v">' + esc(p.belaantekeningen) + '</span></div>';
+      html += '</div>';
+    }
+
+    html += '</div>';
+    return html;
+  }
+
+  // ---------- event wiring ----------
+
+  function attachHandlers(root) {
+    Array.prototype.forEach.call(root.querySelectorAll("[data-toggle]"), function (el) {
+      el.addEventListener("click", function () { toggleCompany(el.getAttribute("data-toggle")); });
+    });
+    Array.prototype.forEach.call(root.querySelectorAll("[data-stage-select]"), function (el) {
+      el.addEventListener("change", function () {
+        var id = el.getAttribute("data-stage-select");
+        el.setAttribute("style", stagePillStyle(el.value));
+        updateCompany(id, { stage: el.value });
+      });
+    });
+    Array.prototype.forEach.call(root.querySelectorAll("[data-delete-company]"), function (el) {
+      el.addEventListener("click", function () { deleteCompany(el.getAttribute("data-delete-company")); });
+    });
+    Array.prototype.forEach.call(root.querySelectorAll("[data-company-notes]"), function (el) {
+      el.addEventListener("blur", function () {
+        var id = el.getAttribute("data-company-notes");
+        updateCompany(id, { notes: el.value });
+        flashSaved(id);
+      });
+    });
+    Array.prototype.forEach.call(root.querySelectorAll("[data-company-linkedin]"), function (el) {
+      el.addEventListener("blur", function () {
+        var id = el.getAttribute("data-company-linkedin");
+        updateCompany(id, { linkedin: el.value.trim() });
+      });
+    });
+    Array.prototype.forEach.call(root.querySelectorAll("[data-add-contact]"), function (el) {
+      el.addEventListener("click", function () { openContactModal(el.getAttribute("data-add-contact"), null); });
+    });
+    Array.prototype.forEach.call(root.querySelectorAll("[data-edit-contact]"), function (el) {
+      el.addEventListener("click", function () {
+        var parts = el.getAttribute("data-edit-contact").split("|");
+        var contact = (state.contactsByCompany[parts[0]] || []).find(function (p) { return p.id === parts[1]; });
+        openContactModal(parts[0], contact || null);
+      });
+    });
+    Array.prototype.forEach.call(root.querySelectorAll("[data-delete-contact]"), function (el) {
+      el.addEventListener("click", function () {
+        var parts = el.getAttribute("data-delete-contact").split("|");
+        deleteContact(parts[0], parts[1]);
+      });
+    });
+  }
+
+  function flashSaved(companyId) {
+    var hint = $('[data-notes-hint="' + companyId + '"]');
+    if (!hint) return;
+    hint.textContent = "Opgeslagen";
+    clearTimeout(state.savedTimers[companyId]);
+    state.savedTimers[companyId] = setTimeout(function () {
+      if (hint) hint.textContent = "Wijzigingen worden automatisch opgeslagen";
+    }, 1800);
+  }
+
+  function toggleCompany(id) {
+    if (state.expandedCompanyId === id) {
+      state.expandedCompanyId = null;
+      unsubscribeContacts();
+      render();
+      return;
+    }
+    unsubscribeContacts();
+    state.expandedCompanyId = id;
+    render();
+    loadAndSubscribeContacts(id);
+  }
+
+  function unsubscribeContacts() {
+    if (state.contactChannel) {
+      supabase.removeChannel(state.contactChannel);
+      state.contactChannel = null;
+    }
+  }
+
+  function loadAndSubscribeContacts(companyId) {
+    supabase.from("contacts").select("*").eq("company_id", companyId).order("first_name")
+      .then(function (res) {
+        if (res.error) { console.error(res.error); toast("Kon contactpersonen niet laden"); return; }
+        state.contactsByCompany[companyId] = res.data || [];
+        if (state.expandedCompanyId === companyId) render();
+      });
+
+    state.contactChannel = supabase.channel("contacts-" + companyId)
+      .on("postgres_changes", { event: "*", schema: "public", table: "contacts", filter: "company_id=eq." + companyId }, function () {
+        // Re-fetch on any change to this company's contacts; simpler and safer
+        // than patching individual rows, and this list is always small.
+        supabase.from("contacts").select("*").eq("company_id", companyId).order("first_name")
+          .then(function (res) {
+            if (res.error) return;
+            state.contactsByCompany[companyId] = res.data || [];
+            if (state.expandedCompanyId === companyId) render();
+          });
+      })
+      .subscribe();
+  }
+
+  // ---------- data ops ----------
+
+  function updateCompany(id, patch) {
+    supabase.from("companies").update(patch).eq("id", id).then(function (res) {
+      if (res.error) { console.error(res.error); toast("Opslaan mislukt"); }
+    });
+  }
+
+  function deleteCompany(id) {
+    if (!confirm("Dit bedrijf en al zijn contactpersonen verwijderen?")) return;
+    supabase.from("companies").delete().eq("id", id).then(function (res) {
+      if (res.error) { console.error(res.error); toast("Verwijderen mislukt"); return; }
+      if (state.expandedCompanyId === id) { state.expandedCompanyId = null; unsubscribeContacts(); }
+      toast("Bedrijf verwijderd");
+    });
+  }
+
+  function deleteContact(companyId, contactId) {
+    if (!confirm("Deze contactpersoon verwijderen?")) return;
+    supabase.from("contacts").delete().eq("id", contactId).then(function (res) {
+      if (res.error) { console.error(res.error); toast("Verwijderen mislukt"); return; }
+      toast("Contactpersoon verwijderd");
+    });
+  }
+
+  // ---------- modals ----------
+
+  function closeModal() { $("#modal-root").innerHTML = ""; }
+
+  function openCompanyModal() {
+    var html = '';
+    html += '<div class="modal-overlay" id="overlay">';
+    html += '  <div class="modal">';
+    html += '    <h2>Nieuw bedrijf</h2>';
+    html += '    <div class="form-grid">';
+    html += '      <div class="form-field full"><label>Bedrijfsnaam</label><input type="text" id="f-name" placeholder="Bijv. Van Herck Verpakkingen"></div>';
+    html += '      <div class="form-field full"><label>Company LinkedIn</label><input type="text" id="f-linkedin" placeholder="https://linkedin.com/company/…"></div>';
+    html += '      <div class="form-field full"><label>Fase</label><select id="f-stage">' + STAGES.map(function (s) { return '<option value="' + s.key + '">' + esc(s.label) + '</option>'; }).join("") + '</select></div>';
+    html += '      <div class="form-field full"><label>Bedrijfsnotities</label><textarea id="f-notes"></textarea></div>';
+    html += '    </div>';
+    html += '    <div class="modal-actions"><button class="btn btn-quiet" id="modal-cancel">Annuleren</button><button class="btn" id="modal-save">Bedrijf toevoegen</button></div>';
+    html += '  </div>';
+    html += '</div>';
+    $("#modal-root").innerHTML = html;
+    $("#overlay").addEventListener("click", function (e) { if (e.target.id === "overlay") closeModal(); });
+    $("#modal-cancel").addEventListener("click", closeModal);
+    $("#modal-save").addEventListener("click", function () {
+      var name = $("#f-name").value.trim();
+      if (!name) { toast("Geef een bedrijfsnaam op"); return; }
+      supabase.from("companies").insert({
+        name: name,
+        linkedin: $("#f-linkedin").value.trim(),
+        stage: $("#f-stage").value,
+        notes: $("#f-notes").value
+      }).then(function (res) {
+        if (res.error) { console.error(res.error); toast("Toevoegen mislukt"); return; }
+        toast("Bedrijf toegevoegd"); closeModal();
+      });
+    });
+  }
+
+  function openContactModal(companyId, contact) {
+    var isEdit = !!contact;
+    contact = contact || {};
+    var html = '';
+    html += '<div class="modal-overlay" id="overlay">';
+    html += '  <div class="modal">';
+    html += '    <h2>' + (isEdit ? "Contactpersoon bewerken" : "Contactpersoon toevoegen") + '</h2>';
+    html += '    <div class="form-grid">';
+    html += field("First Name", "f-first", contact.first_name);
+    html += field("Last Name", "f-last", contact.last_name);
+    html += selectField("Gender", "f-gender", contact.gender, ["", "Man", "Vrouw", "Onbekend"]);
+    html += field("", "f-spacer-hide", "", true);
+    html += field("Email", "f-email", contact.email);
+    html += field("Email 2", "f-email2", contact.email2);
+    html += field("Mobile Phone", "f-mobile", contact.mobile_phone);
+    html += field("Work Phone", "f-work", contact.work_phone);
+    html += field("Beller", "f-beller", contact.beller);
+    html += field("Vervolg", "f-vervolg", contact.vervolg);
+    html += fieldArea("Notities", "f-notities", contact.notities, true);
+    html += fieldArea("Belaantekeningen", "f-belaantekeningen", contact.belaantekeningen, true);
+    html += fieldArea("Mogelijk interessante hook", "f-hook", contact.hook, true);
+    html += '    </div>';
+    html += '    <div class="modal-actions"><button class="btn btn-quiet" id="modal-cancel">Annuleren</button><button class="btn" id="modal-save">' + (isEdit ? "Opslaan" : "Toevoegen") + '</button></div>';
+    html += '  </div>';
+    html += '</div>';
+    $("#modal-root").innerHTML = html;
+
+    function field(label, id, value, hide) {
+      if (hide) return '<div class="form-field" style="visibility:hidden"></div>';
+      return '<div class="form-field"><label>' + esc(label) + '</label><input type="text" id="' + id + '" value="' + esc(value || "") + '"></div>';
+    }
+    function selectField(label, id, value, options) {
+      return '<div class="form-field"><label>' + esc(label) + '</label><select id="' + id + '">' + options.map(function (o) {
+        return '<option value="' + esc(o) + '"' + (o === value ? " selected" : "") + '>' + (o || "—") + '</option>';
+      }).join("") + '</select></div>';
+    }
+    function fieldArea(label, id, value, full) {
+      return '<div class="form-field' + (full ? " full" : "") + '"><label>' + esc(label) + '</label><textarea id="' + id + '">' + esc(value || "") + '</textarea></div>';
+    }
+
+    $("#overlay").addEventListener("click", function (e) { if (e.target.id === "overlay") closeModal(); });
+    $("#modal-cancel").addEventListener("click", closeModal);
+    $("#modal-save").addEventListener("click", function () {
+      var data = {
+        first_name: $("#f-first").value.trim(),
+        last_name: $("#f-last").value.trim(),
+        gender: $("#f-gender").value,
+        email: $("#f-email").value.trim(),
+        email2: $("#f-email2").value.trim(),
+        mobile_phone: $("#f-mobile").value.trim(),
+        work_phone: $("#f-work").value.trim(),
+        beller: $("#f-beller").value.trim(),
+        vervolg: $("#f-vervolg").value.trim(),
+        notities: $("#f-notities").value.trim(),
+        belaantekeningen: $("#f-belaantekeningen").value.trim(),
+        hook: $("#f-hook").value.trim()
+      };
+      if (!data.first_name && !data.last_name) { toast("Geef een naam op"); return; }
+      var op;
+      if (isEdit) {
+        op = supabase.from("contacts").update(data).eq("id", contact.id);
+      } else {
+        data.company_id = companyId;
+        op = supabase.from("contacts").insert(data);
+      }
+      op.then(function (res) {
+        if (res.error) { console.error(res.error); toast("Opslaan mislukt"); return; }
+        toast(isEdit ? "Opgeslagen" : "Contactpersoon toegevoegd"); closeModal();
+      });
+    });
+  }
+
+  // ---------- boot ----------
+
+  $("#btn-add-company").addEventListener("click", openCompanyModal);
+  $("#btn-logout").addEventListener("click", function () { window.logout(); });
+  $("#search-input").addEventListener("input", function (e) {
+    state.search = e.target.value;
+    renderTable();
+  });
+  $("#banner-close").addEventListener("click", function () { $("#sample-banner").style.display = "none"; });
+
+  (async function boot() {
+    var profile = await window.requireUser();
+    if (!profile) return; // requireUser already redirected to login.html
+
+    supabase.from("companies").select("*").order("name").then(function (res) {
+      if (res.error) {
+        showError("Kon bedrijven niet laden: " + res.error.message);
+        $("#liveDot").classList.add("off");
+        $("#liveText").textContent = "Fout bij laden";
+        return;
+      }
+      state.companies = res.data || [];
+      $("#liveText").textContent = "Live · verbonden";
+      render();
+    });
+
+    companiesChannel = supabase.channel("companies-live")
+      .on("postgres_changes", { event: "*", schema: "public", table: "companies" }, function (payload) {
+        applyCompanyChange(payload);
+      })
+      .subscribe();
+  })();
+
+  function applyCompanyChange(payload) {
+    var rec = (payload.new && Object.keys(payload.new).length) ? payload.new : payload.old;
+    if (!rec) return;
+    var idx = state.companies.findIndex(function (c) { return c.id === rec.id; });
+    if (payload.eventType === "DELETE") {
+      if (idx >= 0) state.companies.splice(idx, 1);
+    } else if (idx >= 0) {
+      state.companies[idx] = payload.new;
+    } else {
+      state.companies.push(payload.new);
+    }
+    state.companies.sort(function (a, b) { return (a.name || "").localeCompare(b.name || ""); });
+    render();
+  }
+})();
+</script>
+</body>
+</html>
