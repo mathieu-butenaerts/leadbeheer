@@ -106,6 +106,18 @@
   .fu-overdue{ color:var(--magenta); }
   .fu-soon{ color:var(--blauw-l); }
 
+  /* ---- tags ---- */
+  .tag-chip-row{ display:flex; flex-wrap:wrap; gap:5px; align-items:center; }
+  .tag-chip{ display:inline-flex; align-items:center; gap:5px; border:1px solid; border-radius:999px;
+    padding:2px 4px 2px 9px; font-size:10.5px; font-weight:600; white-space:nowrap; }
+  .tag-chip .tag-remove{ border:none; background:none; cursor:pointer; color:inherit; opacity:.7;
+    font-size:13px; line-height:1; padding:0 4px; }
+  .tag-chip .tag-remove:hover{ opacity:1; }
+  .tag-add-row{ display:flex; gap:6px; margin-top:8px; }
+  .tag-add-row input{ flex:1; border:1px solid var(--border); background:var(--panel); color:var(--text);
+    border-radius:7px; padding:7px 9px; font-size:12.5px; font-family:inherit; }
+  .no-tags{ color:var(--dim); font-style:italic; font-size:12px; }
+
   /* ---- filters ---- */
   .filters{ display:flex; flex-wrap:wrap; gap:12px; align-items:center; background:var(--panel); border:1px solid var(--border);
     border-radius:14px; padding:14px 16px; margin-bottom:16px; }
@@ -289,6 +301,7 @@
       <option value="week">Deze week</option>
       <option value="none">Geen datum</option>
     </select>
+    <select id="tag-filter"><option value="">Alle tags</option></select>
     <div class="filters-spacer"></div>
     <div class="filters-actions">
       <button class="btn btn-quiet" id="btn-template">Sjabloon downloaden</button>
@@ -315,6 +328,7 @@
   </div>
 </div>
 
+<datalist id="tag-options"></datalist>
 <div id="modal-root"></div>
 <div class="toast" id="toast"></div>
 
@@ -336,17 +350,33 @@
   var state = {
     companies: [],
     contactsByCompany: {},
+    tags: [],
+    companyTagIds: {},
     expandedCompanyId: null,
     search: "",
     stageFilter: "all",
     bellerFilter: "",
     followUpFilter: "",
+    tagFilter: "",
     sort: { field: "name", dir: "asc" },
     savedTimers: {}
   };
   var companiesChannel = null;
   var contactsChannel = null;
+  var tagsChannel = null;
+  var companyTagsChannel = null;
   var stageChart = null;
+
+  // Deterministic per-tag color (by id, not name, so it survives a rename)
+  // — a small fixed palette rather than a color picker, since the point is
+  // telling tags apart at a glance, not letting people design them.
+  var TAG_PALETTE = ["#199DD9", "#83007D", "#E9167D", "#2fbf7a", "#c060b8", "#4ab8e6", "#d9a441", "#6f8fd9"];
+  function tagColor(tagId) {
+    var hash = 0;
+    for (var i = 0; i < tagId.length; i++) hash = (hash * 31 + tagId.charCodeAt(i)) >>> 0;
+    return TAG_PALETTE[hash % TAG_PALETTE.length];
+  }
+  function tagById(id) { return state.tags.find(function (t) { return t.id === id; }); }
 
   var TEMPLATE_COLUMNS = [
     "Company", "Company LinkedIn", "Fase", "Bedrijfsnotities",
@@ -381,10 +411,47 @@
     renderStats();
     renderChips();
     renderBellerOptions();
+    renderTagFilterOptions();
+    renderTagDatalist();
     renderStageChart();
     renderFollowupRanklist();
     renderSortIndicators();
     renderTable();
+  }
+
+  // Only tags currently attached to at least one company show up as filter
+  // options — an unused tag (created, then untagged from everything) would
+  // otherwise sit in the dropdown doing nothing. The add-tag datalist
+  // (renderTagDatalist) is not filtered this way, so an unused tag can still
+  // be found and reattached.
+  function renderTagFilterOptions() {
+    var sel = $("#tag-filter");
+    var counts = {};
+    Object.keys(state.companyTagIds).forEach(function (companyId) {
+      state.companyTagIds[companyId].forEach(function (tagId) { counts[tagId] = (counts[tagId] || 0) + 1; });
+    });
+    var used = state.tags.filter(function (t) { return counts[t.id] > 0; });
+    var current = sel.value;
+    sel.innerHTML = '<option value="">Alle tags</option>' + used.map(function (t) {
+      return '<option value="' + t.id + '"' + (t.id === current ? " selected" : "") + '>' + esc(t.name) + ' (' + counts[t.id] + ')</option>';
+    }).join("");
+    if (current && !used.some(function (t) { return t.id === current; })) { sel.value = ""; state.tagFilter = ""; }
+  }
+
+  function renderTagDatalist() {
+    $("#tag-options").innerHTML = state.tags.map(function (t) {
+      return '<option value="' + esc(t.name) + '">';
+    }).join("");
+  }
+
+  function renderTagChip(tag, opts) {
+    opts = opts || {};
+    var color = tagColor(tag.id);
+    var remove = opts.removable
+      ? '<button type="button" class="tag-remove" data-remove-tag="' + tag.id + '" title="Tag verwijderen">×</button>'
+      : "";
+    return '<span class="tag-chip" style="background:' + color + '22;color:' + color + ';border-color:' + color + '66">' +
+      esc(tag.name) + remove + '</span>';
   }
 
   function formatDate(iso) {
@@ -568,6 +635,7 @@
       if (state.stageFilter !== "all" && c.stage !== state.stageFilter) return false;
       if (q && (c.name || "").toLowerCase().indexOf(q) === -1) return false;
       if (!companyMatchesContactFilters(c)) return false;
+      if (state.tagFilter && (state.companyTagIds[c.id] || []).indexOf(state.tagFilter) === -1) return false;
       return true;
     });
     return sortCompanies(list);
@@ -598,7 +666,9 @@
     var html = '';
     html += '<tr class="rij' + (isOpen ? ' open' : '') + '" data-toggle="' + c.id + '">';
     html += '  <td><span class="chev"><svg width="9" height="9" viewBox="0 0 10 10" fill="none"><path d="M2 1L7.5 5L2 9" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg></span></td>';
-    html += '  <td><div class="company-name-cell"><span class="company-name">' + esc(c.name || "(naam onbekend)") + '</span>' + linkedin + '</div></td>';
+    var rowTags = (state.companyTagIds[c.id] || []).map(tagById).filter(Boolean);
+    var rowTagChips = rowTags.length ? '<span class="tag-chip-row">' + rowTags.map(function (t) { return renderTagChip(t); }).join("") + '</span>' : "";
+    html += '  <td><div class="company-name-cell"><span class="company-name">' + esc(c.name || "(naam onbekend)") + '</span>' + linkedin + rowTagChips + '</div></td>';
     html += '  <td><select class="stage-pill tnum" data-stage-select="' + c.id + '" style="' + stagePillStyle(c.stage) + '" onclick="event.stopPropagation()">' + stageOptions + '</select></td>';
     html += '  <td class="contact-count-cell tnum">' + (c.contact_count || 0) + '</td>';
     var nextDate = nextFollowUp(c.id);
@@ -611,6 +681,12 @@
       html += '<tr class="detail"><td colspan="6"><div class="detail-inner">' + renderCompanyDetail(c) + '</div></td></tr>';
     }
     return html;
+  }
+
+  function renderCompanyTags(companyId) {
+    var tags = (state.companyTagIds[companyId] || []).map(tagById).filter(Boolean);
+    if (!tags.length) return '<span class="no-tags">Nog geen tags</span>';
+    return tags.map(function (t) { return renderTagChip(t, { removable: true }); }).join("");
   }
 
   function renderCompanyDetail(c) {
@@ -626,6 +702,14 @@
     html += '  <div class="meta-block">';
     html += '    <span class="field-label">Company LinkedIn</span>';
     html += '    <input type="text" data-company-linkedin="' + c.id + '" placeholder="https://linkedin.com/company/…" value="' + esc(c.linkedin || "") + '">';
+    html += '  </div>';
+    html += '  <div class="meta-block">';
+    html += '    <span class="field-label">Tags</span>';
+    html += '    <div class="tag-chip-row">' + renderCompanyTags(c.id) + '</div>';
+    html += '    <div class="tag-add-row">';
+    html += '      <input type="text" list="tag-options" placeholder="Tag toevoegen…" data-tag-input="' + c.id + '">';
+    html += '      <button class="btn btn-quiet" data-tag-add="' + c.id + '">+ Toevoegen</button>';
+    html += '    </div>';
     html += '  </div>';
     html += '</div>';
 
@@ -748,6 +832,31 @@
         deleteContact(parts[0], parts[1]);
       });
     });
+    Array.prototype.forEach.call(root.querySelectorAll("[data-remove-tag]"), function (el) {
+      // Tag chips with a remove button only ever render inside the one
+      // currently-expanded company's detail panel, so that's always the
+      // right company id — no need to walk the DOM for it.
+      el.addEventListener("click", function () {
+        removeTagFromCompany(state.expandedCompanyId, el.getAttribute("data-remove-tag"));
+      });
+    });
+    Array.prototype.forEach.call(root.querySelectorAll("[data-tag-add]"), function (el) {
+      el.addEventListener("click", function () {
+        var companyId = el.getAttribute("data-tag-add");
+        var input = root.querySelector('[data-tag-input="' + companyId + '"]');
+        addTagToCompany(companyId, input.value);
+        input.value = "";
+      });
+    });
+    Array.prototype.forEach.call(root.querySelectorAll("[data-tag-input]"), function (el) {
+      el.addEventListener("keydown", function (e) {
+        if (e.key !== "Enter") return;
+        e.preventDefault();
+        var companyId = el.getAttribute("data-tag-input");
+        addTagToCompany(companyId, el.value);
+        el.value = "";
+      });
+    });
   }
 
   function flashSaved(companyId) {
@@ -833,6 +942,35 @@
     supabase.from("contacts").delete().eq("id", contactId).then(function (res) {
       if (res.error) { console.error(res.error); toast("Verwijderen mislukt"); return; }
       toast("Contactpersoon verwijderd");
+    });
+  }
+
+  function linkTagToCompany(companyId, tagId) {
+    if ((state.companyTagIds[companyId] || []).indexOf(tagId) !== -1) return; // already tagged
+    supabase.from("company_tags").insert({ company_id: companyId, tag_id: tagId }).then(function (res) {
+      if (res.error) { console.error(res.error); toast("Tag toevoegen mislukt"); }
+    });
+  }
+
+  // Reuses an existing tag by name (case-insensitive) if one exists, else
+  // creates it. A unique index on lower(name) is the real guard against two
+  // people creating "Hot lead" and "hot lead" at the same moment; a failed
+  // insert here just means someone else won that race, which the tags-live
+  // realtime channel will reflect a moment later — not worth retrying for.
+  function addTagToCompany(companyId, rawName) {
+    var name = (rawName || "").trim();
+    if (!name) return;
+    var existing = state.tags.find(function (t) { return t.name.toLowerCase() === name.toLowerCase(); });
+    if (existing) { linkTagToCompany(companyId, existing.id); return; }
+    supabase.from("tags").insert({ name: name }).select().single().then(function (res) {
+      if (res.error) { console.error(res.error); toast("Tag aanmaken mislukt — bestaat de tag al?"); return; }
+      linkTagToCompany(companyId, res.data.id);
+    });
+  }
+
+  function removeTagFromCompany(companyId, tagId) {
+    supabase.from("company_tags").delete().eq("company_id", companyId).eq("tag_id", tagId).then(function (res) {
+      if (res.error) { console.error(res.error); toast("Tag verwijderen mislukt"); }
     });
   }
 
@@ -1207,6 +1345,10 @@
     state.followUpFilter = e.target.value;
     renderTable();
   });
+  $("#tag-filter").addEventListener("change", function (e) {
+    state.tagFilter = e.target.value;
+    renderTable();
+  });
   Array.prototype.forEach.call(document.querySelectorAll("th[data-sort]"), function (th) {
     th.addEventListener("click", function () {
       var field = th.getAttribute("data-sort");
@@ -1237,11 +1379,13 @@
 
     Promise.all([
       supabase.from("companies").select("*").order("name"),
-      supabase.from("contacts").select("*")
+      supabase.from("contacts").select("*"),
+      supabase.from("tags").select("*").order("name"),
+      supabase.from("company_tags").select("*")
     ]).then(function (results) {
-      var companiesRes = results[0], contactsRes = results[1];
-      if (companiesRes.error || contactsRes.error) {
-        var err = companiesRes.error || contactsRes.error;
+      var companiesRes = results[0], contactsRes = results[1], tagsRes = results[2], companyTagsRes = results[3];
+      var err = companiesRes.error || contactsRes.error || tagsRes.error || companyTagsRes.error;
+      if (err) {
         showError("Kon gegevens niet laden: " + err.message);
         $("#liveDot").classList.add("off");
         $("#liveText").textContent = "Fout bij laden";
@@ -1249,6 +1393,8 @@
       }
       state.companies = companiesRes.data || [];
       state.contactsByCompany = indexContactsByCompany(contactsRes.data);
+      state.tags = tagsRes.data || [];
+      state.companyTagIds = indexCompanyTags(companyTagsRes.data);
       $("#liveText").textContent = "Live · verbonden";
       render();
     });
@@ -1264,7 +1410,60 @@
         applyContactChange(payload);
       })
       .subscribe();
+
+    tagsChannel = supabase.channel("tags-live")
+      .on("postgres_changes", { event: "*", schema: "public", table: "tags" }, function (payload) {
+        applyTagChange(payload);
+      })
+      .subscribe();
+
+    companyTagsChannel = supabase.channel("company-tags-live")
+      .on("postgres_changes", { event: "*", schema: "public", table: "company_tags" }, function (payload) {
+        applyCompanyTagChange(payload);
+      })
+      .subscribe();
   })();
+
+  function indexCompanyTags(rows) {
+    var byCompany = {};
+    (rows || []).forEach(function (row) {
+      if (!byCompany[row.company_id]) byCompany[row.company_id] = [];
+      byCompany[row.company_id].push(row.tag_id);
+    });
+    return byCompany;
+  }
+
+  function applyTagChange(payload) {
+    if (payload.eventType === "DELETE") {
+      var deletedId = payload.old && payload.old.id;
+      if (deletedId) state.tags = state.tags.filter(function (t) { return t.id !== deletedId; });
+    } else {
+      var rec = payload.new;
+      var idx = state.tags.findIndex(function (t) { return t.id === rec.id; });
+      if (idx >= 0) state.tags[idx] = rec; else state.tags.push(rec);
+      state.tags.sort(function (a, b) { return (a.name || "").localeCompare(b.name || ""); });
+    }
+    render();
+  }
+
+  // company_tags has no surrogate id — its primary key IS (company_id,
+  // tag_id), so Postgres's default replica identity (the primary key)
+  // guarantees both fields are present on payload.old for a DELETE, unlike
+  // the id-only contacts table above.
+  function applyCompanyTagChange(payload) {
+    if (payload.eventType === "DELETE") {
+      var old = payload.old;
+      if (!old || !old.company_id) return;
+      var list = (state.companyTagIds[old.company_id] || []).filter(function (id) { return id !== old.tag_id; });
+      state.companyTagIds[old.company_id] = list;
+    } else {
+      var rec = payload.new;
+      var list2 = state.companyTagIds[rec.company_id] || [];
+      if (list2.indexOf(rec.tag_id) === -1) list2 = list2.concat([rec.tag_id]);
+      state.companyTagIds[rec.company_id] = list2;
+    }
+    render();
+  }
 
   function applyCompanyChange(payload) {
     var rec = (payload.new && Object.keys(payload.new).length) ? payload.new : payload.old;

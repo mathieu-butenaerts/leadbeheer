@@ -52,6 +52,25 @@ alter table public.contacts add column if not exists follow_up_date date;
 
 create index if not exists idx_contacts_company on public.contacts(company_id);
 
+-- User-created labels (like mailbox tags), many-to-many with companies.
+create table if not exists public.tags (
+  id         uuid primary key default gen_random_uuid(),
+  name       text not null,
+  created_at timestamptz not null default now()
+);
+-- Case-insensitive uniqueness so "Hot lead" and "hot lead" can't both be
+-- created — the app checks this client-side too, but the constraint is what
+-- actually prevents it under concurrent edits.
+create unique index if not exists idx_tags_name_lower on public.tags (lower(name));
+
+create table if not exists public.company_tags (
+  company_id uuid not null references public.companies(id) on delete cascade,
+  tag_id     uuid not null references public.tags(id) on delete cascade,
+  created_at timestamptz not null default now(),
+  primary key (company_id, tag_id)
+);
+create index if not exists idx_company_tags_tag on public.company_tags(tag_id);
+
 -- Keep companies.contact_count in sync automatically, so the browser never
 -- has to read-modify-write it (that would race when two people edit at once).
 create or replace function public.leads_sync_contact_count() returns trigger
@@ -82,8 +101,10 @@ create trigger trg_contacts_count_del after delete on public.contacts
 -- Mirrors the same trust model Marktmonitor already uses for status updates
 -- on the `tenders` table — access control lives in Supabase Auth, not in the
 -- page being "private".
-alter table public.companies enable row level security;
-alter table public.contacts  enable row level security;
+alter table public.companies    enable row level security;
+alter table public.contacts     enable row level security;
+alter table public.tags         enable row level security;
+alter table public.company_tags enable row level security;
 
 drop policy if exists "authenticated read companies" on public.companies;
 create policy "authenticated read companies" on public.companies
@@ -101,9 +122,25 @@ drop policy if exists "authenticated write contacts" on public.contacts;
 create policy "authenticated write contacts" on public.contacts
   for all to authenticated using (true) with check (true);
 
--- Live updates in the browser (company/contact changes push to every open tab).
--- Wrapped so re-running this script (or a table already being a member) can't
--- error out and roll back everything else above.
+drop policy if exists "authenticated read tags" on public.tags;
+create policy "authenticated read tags" on public.tags
+  for select to authenticated using (true);
+
+drop policy if exists "authenticated write tags" on public.tags;
+create policy "authenticated write tags" on public.tags
+  for all to authenticated using (true) with check (true);
+
+drop policy if exists "authenticated read company_tags" on public.company_tags;
+create policy "authenticated read company_tags" on public.company_tags
+  for select to authenticated using (true);
+
+drop policy if exists "authenticated write company_tags" on public.company_tags;
+create policy "authenticated write company_tags" on public.company_tags
+  for all to authenticated using (true) with check (true);
+
+-- Live updates in the browser (company/contact/tag changes push to every
+-- open tab). Wrapped so re-running this script (or a table already being a
+-- member) can't error out and roll back everything else above.
 do $$
 begin
   begin
@@ -112,6 +149,14 @@ begin
   end;
   begin
     execute 'alter publication supabase_realtime add table public.contacts';
+  exception when duplicate_object then null;
+  end;
+  begin
+    execute 'alter publication supabase_realtime add table public.tags';
+  exception when duplicate_object then null;
+  end;
+  begin
+    execute 'alter publication supabase_realtime add table public.company_tags';
   exception when duplicate_object then null;
   end;
 end $$;
