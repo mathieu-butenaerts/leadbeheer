@@ -118,6 +118,16 @@
     border-radius:7px; padding:7px 9px; font-size:12.5px; font-family:inherit; }
   .no-tags{ color:var(--dim); font-style:italic; font-size:12px; }
 
+  .tag-manage-row{ display:flex; flex-wrap:wrap; gap:8px; }
+  .tag-manage-empty{ color:var(--dim); font-style:italic; font-size:12.5px; }
+  .tag-pill{ display:inline-flex; align-items:center; gap:7px; border:1px solid; border-radius:999px;
+    padding:6px 6px 6px 13px; font-size:12px; font-weight:700; cursor:pointer; background:none; }
+  .tag-pill .cnt{ opacity:.8; font-variant-numeric:tabular-nums; }
+  .tag-pill .tag-pill-remove{ border:none; background:rgba(0,0,0,0.18); color:inherit; border-radius:50%;
+    width:16px; height:16px; display:inline-flex; align-items:center; justify-content:center; cursor:pointer;
+    font-size:11px; line-height:1; padding:0; }
+  .tag-pill .tag-pill-remove:hover{ background:rgba(0,0,0,0.32); }
+
   /* ---- filters ---- */
   .filters{ display:flex; flex-wrap:wrap; gap:12px; align-items:center; background:var(--panel); border:1px solid var(--border);
     border-radius:14px; padding:14px 16px; margin-bottom:16px; }
@@ -291,6 +301,11 @@
     </div>
   </div>
 
+  <div class="panel" style="margin-bottom:16px;">
+    <h2>Tags <span class="hint">(klik om te filteren, × om volledig te verwijderen)</span></h2>
+    <div class="tag-manage-row" id="tagManageList"></div>
+  </div>
+
   <div class="filters">
     <input type="text" id="search-input" placeholder="Zoek op bedrijfsnaam…">
     <div class="stage-pills" id="stage-chips"></div>
@@ -301,7 +316,6 @@
       <option value="week">Deze week</option>
       <option value="none">Geen datum</option>
     </select>
-    <select id="tag-filter"><option value="">Alle tags</option></select>
     <div class="filters-spacer"></div>
     <div class="filters-actions">
       <button class="btn btn-quiet" id="btn-template">Sjabloon downloaden</button>
@@ -411,7 +425,7 @@
     renderStats();
     renderChips();
     renderBellerOptions();
-    renderTagFilterOptions();
+    renderTagManagePanel();
     renderTagDatalist();
     renderStageChart();
     renderFollowupRanklist();
@@ -419,23 +433,48 @@
     renderTable();
   }
 
-  // Only tags currently attached to at least one company show up as filter
-  // options — an unused tag (created, then untagged from everything) would
-  // otherwise sit in the dropdown doing nothing. The add-tag datalist
-  // (renderTagDatalist) is not filtered this way, so an unused tag can still
-  // be found and reattached.
-  function renderTagFilterOptions() {
-    var sel = $("#tag-filter");
+  // The one place tags are filtered, deleted, and (via the count) audited —
+  // shows every tag that exists, not just ones currently in use, since an
+  // unused stray tag is exactly what you'd come here to clean up. Clicking a
+  // pill toggles it as the active filter; its × deletes the tag everywhere
+  // (cascades to company_tags in the database, so every company loses it).
+  function renderTagManagePanel() {
+    var root = $("#tagManageList");
+    if (!state.tags.length) {
+      root.innerHTML = '<span class="tag-manage-empty">Nog geen tags. Voeg er een toe via een bedrijf.</span>';
+      return;
+    }
     var counts = {};
     Object.keys(state.companyTagIds).forEach(function (companyId) {
       state.companyTagIds[companyId].forEach(function (tagId) { counts[tagId] = (counts[tagId] || 0) + 1; });
     });
-    var used = state.tags.filter(function (t) { return counts[t.id] > 0; });
-    var current = sel.value;
-    sel.innerHTML = '<option value="">Alle tags</option>' + used.map(function (t) {
-      return '<option value="' + t.id + '"' + (t.id === current ? " selected" : "") + '>' + esc(t.name) + ' (' + counts[t.id] + ')</option>';
+    root.innerHTML = state.tags.map(function (t) {
+      var color = tagColor(t.id);
+      var active = state.tagFilter === t.id;
+      var style = active
+        ? "background:" + color + ";color:#0b1210;border-color:" + color
+        : "background:" + color + "1a;color:" + color + ";border-color:" + color + "66";
+      return '<span class="tag-pill" data-tag-pill="' + t.id + '" style="' + style + '">' +
+        esc(t.name) + ' <span class="cnt">' + (counts[t.id] || 0) + '</span>' +
+        '<button type="button" class="tag-pill-remove" data-tag-delete="' + t.id + '" title="Tag volledig verwijderen">×</button>' +
+        '</span>';
     }).join("");
-    if (current && !used.some(function (t) { return t.id === current; })) { sel.value = ""; state.tagFilter = ""; }
+    Array.prototype.forEach.call(root.querySelectorAll("[data-tag-pill]"), function (el) {
+      el.addEventListener("click", function () {
+        var id = el.getAttribute("data-tag-pill");
+        state.tagFilter = state.tagFilter === id ? "" : id;
+        render();
+      });
+    });
+    Array.prototype.forEach.call(root.querySelectorAll("[data-tag-delete]"), function (el) {
+      el.addEventListener("click", function (e) {
+        e.stopPropagation(); // don't also trigger the pill's own filter-toggle click
+        var id = el.getAttribute("data-tag-delete");
+        var tag = tagById(id);
+        if (!confirm('Tag "' + (tag ? tag.name : "") + '" volledig verwijderen? Dit haalt de tag weg bij alle bedrijven.')) return;
+        deleteTag(id);
+      });
+    });
   }
 
   function renderTagDatalist() {
@@ -974,6 +1013,14 @@
     });
   }
 
+  function deleteTag(tagId) {
+    supabase.from("tags").delete().eq("id", tagId).then(function (res) {
+      if (res.error) { console.error(res.error); toast("Tag verwijderen mislukt"); return; }
+      if (state.tagFilter === tagId) state.tagFilter = "";
+      toast("Tag verwijderd");
+    });
+  }
+
   // ---------- modals ----------
 
   function closeModal() { $("#modal-root").innerHTML = ""; }
@@ -1343,10 +1390,6 @@
   });
   $("#followup-filter").addEventListener("change", function (e) {
     state.followUpFilter = e.target.value;
-    renderTable();
-  });
-  $("#tag-filter").addEventListener("change", function (e) {
-    state.tagFilter = e.target.value;
     renderTable();
   });
   Array.prototype.forEach.call(document.querySelectorAll("th[data-sort]"), function (th) {
