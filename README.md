@@ -117,10 +117,19 @@ One-time setup (only needs doing once per Supabase project):
 1. **Get a Lusha API key.** In the Lusha dashboard:
    [dashboard.lusha.com/enrich/api](https://dashboard.lusha.com/enrich/api).
    Requires a Lusha plan with API access.
-2. **Install the Supabase CLI** (if you don't have it):
-   ```bash
-   npm install -g supabase
-   ```
+2. **Install the Supabase CLI** (if you don't have it). Supabase's CLI
+   deliberately blocks a plain `npm install -g` (it errors out on purpose) —
+   install it one of these ways instead:
+   - **Windows (Scoop):**
+     ```powershell
+     scoop bucket add supabase https://github.com/supabase/scoop-bucket.git
+     scoop install supabase
+     ```
+     (install Scoop itself first if needed: `irm get.scoop.sh | iex`)
+   - **macOS/Linux (Homebrew):** `brew install supabase/tap/supabase`
+   - **No install at all — prefix every command with `npx`** (works
+     anywhere, re-downloads each time so it's slower, fine for a one-off
+     setup): `npx supabase login`, `npx supabase link ...`, etc.
 3. **Log in and link this repo to your Supabase project**, from this repo's
    root:
    ```bash
