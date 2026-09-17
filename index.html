@@ -584,12 +584,37 @@
     var hasAny = ENGAGEMENT_FIELDS.some(function (f) { return c[f[1]] != null; });
     if (!hasAny) return null;
     var score = 0;
-    var levelPoints = { high: 20, medium: 12, low: 5 };
-    score += levelPoints[(c.engagement_level || "").toLowerCase()] || 0;
-    if (c.organic_impressions > 0) score += Math.min(15, (c.organic_engagements / c.organic_impressions) * 300);
-    if (c.paid_impressions > 0) score += Math.min(15, (c.paid_engagements / c.paid_impressions) * 200);
-    score += Math.min(30, (c.paid_qualified_leads || 0) * 10);
+
+    // LinkedIn's own "Engagement Level" values aren't just High/Medium/Low
+    // — real exports include "Very Low" (and presumably "Very High"), which
+    // an exact-match map silently scored as 0. Substring match instead, and
+    // check the "very ..." variants first so they don't get caught by the
+    // plain "low"/"high" check.
+    var level = (c.engagement_level || "").toLowerCase();
+    if (level.indexOf("very high") !== -1) score += 25;
+    else if (level.indexOf("high") !== -1) score += 20;
+    else if (level.indexOf("medium") !== -1) score += 12;
+    else if (level.indexOf("very low") !== -1) score += 2;
+    else if (level.indexOf("low") !== -1) score += 5;
+
+    // Organic engagement RATE, not raw impressions.
+    if (c.organic_impressions > 0) {
+      score += Math.min(15, (c.organic_engagements / c.organic_impressions) * 300);
+    }
+    // Paid interaction rate — clicks, engagements, and video views all
+    // count as someone doing something with the ad, not merely seeing it.
+    // (These three used to just sit there unused in the score entirely.)
+    if (c.paid_impressions > 0) {
+      var paidInteractions = (c.paid_clicks || 0) + (c.paid_engagements || 0) + (c.paid_video_views || 0);
+      score += Math.min(15, (paidInteractions / c.paid_impressions) * 100);
+    }
+    // Funnel depth: a conversion counts for less than a lead, a lead for
+    // less than a QUALIFIED lead — each also used to be ignored except
+    // leads/qualified leads.
+    score += Math.min(15, (c.paid_conversions || 0) * 3);
     score += Math.min(10, (c.paid_leads || 0) * 2);
+    score += Math.min(30, (c.paid_qualified_leads || 0) * 10);
+
     if (c.paid_qualified_leads > 0 && c.cost_per_qualified_lead > 0) {
       if (c.cost_per_qualified_lead < 50) score += 10;
       else if (c.cost_per_qualified_lead < 150) score += 5;
