@@ -5,6 +5,7 @@ migrate_land.py and migrate_native_format.py.
 """
 
 import os
+import warnings
 
 import pandas as pd
 
@@ -95,7 +96,17 @@ def read_csv_source(path, required_columns):
     last_error = None
     for encoding in ("utf-8-sig", "cp1252", "latin-1"):
         try:
-            df = pd.read_csv(path, dtype=str, encoding=encoding)
+            # engine="python" + on_bad_lines="warn": a row with a stray
+            # unescaped comma (e.g. "1,234.50" or "Smith, Jones & Co."
+            # outside quotes) throws off that ONE line's column count.
+            # Skip just that row instead of aborting the whole import, but
+            # capture the warning so it's still reported, not silently
+            # dropped.
+            with warnings.catch_warnings(record=True) as caught:
+                warnings.simplefilter("always")
+                df = pd.read_csv(path, dtype=str, encoding=encoding, engine="python", on_bad_lines="warn")
+            for w in caught:
+                print(f"Skipped a malformed row: {w.message}")
         except UnicodeDecodeError as exc:
             last_error = exc
             continue
