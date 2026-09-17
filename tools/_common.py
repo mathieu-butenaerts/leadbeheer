@@ -87,7 +87,22 @@ def read_source(path, required_columns):
 
 
 def read_csv_source(path, required_columns):
-    return _require_columns(pd.read_csv(path, dtype=str), required_columns)
+    # LinkedIn's own exports (and plenty of others) are Windows-1252, not
+    # UTF-8 -- a "®" or curly quote in a company name is enough to break a
+    # plain pd.read_csv(path). Try encodings in order of how likely they are
+    # for this kind of export; latin-1 never raises (it maps every byte to
+    # some character), so this always succeeds by the end of the list.
+    last_error = None
+    for encoding in ("utf-8-sig", "cp1252", "latin-1"):
+        try:
+            df = pd.read_csv(path, dtype=str, encoding=encoding)
+        except UnicodeDecodeError as exc:
+            last_error = exc
+            continue
+        if encoding != "utf-8-sig":
+            print(f"Note: read as {encoding} (the file isn't UTF-8) — check special characters in the output.")
+        return _require_columns(df, required_columns)
+    raise SystemExit(f"Could not read this file with any known encoding: {last_error}")
 
 
 def to_number(value):
