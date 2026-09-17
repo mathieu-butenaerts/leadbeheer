@@ -34,9 +34,13 @@ where c.id <> k.keeper_id;
 select count(*) as duplicate_rows_to_remove from _dupe_map;
 
 update public.companies keep set
-  linkedin = coalesce(nullif(keep.linkedin, ''), (select nullif(d.linkedin, '') from public.companies d join _dupe_map m on m.dupe_id = d.id where m.keeper_id = keep.id and nullif(d.linkedin, '') is not null limit 1)),
-  notes = coalesce(nullif(keep.notes, ''), (select nullif(d.notes, '') from public.companies d join _dupe_map m on m.dupe_id = d.id where m.keeper_id = keep.id and nullif(d.notes, '') is not null limit 1)),
-  engagement_level = coalesce(nullif(keep.engagement_level, ''), (select nullif(d.engagement_level, '') from public.companies d join _dupe_map m on m.dupe_id = d.id where m.keeper_id = keep.id and nullif(d.engagement_level, '') is not null limit 1)),
+  -- linkedin/notes/engagement_level are NOT NULL columns (default ''), so
+  -- each chain needs a trailing '' fallback for when NEITHER the keeper NOR
+  -- any duplicate has a non-empty value — otherwise coalesce lands on NULL
+  -- and the update violates the not-null constraint.
+  linkedin = coalesce(nullif(keep.linkedin, ''), (select nullif(d.linkedin, '') from public.companies d join _dupe_map m on m.dupe_id = d.id where m.keeper_id = keep.id and nullif(d.linkedin, '') is not null limit 1), ''),
+  notes = coalesce(nullif(keep.notes, ''), (select nullif(d.notes, '') from public.companies d join _dupe_map m on m.dupe_id = d.id where m.keeper_id = keep.id and nullif(d.notes, '') is not null limit 1), ''),
+  engagement_level = coalesce(nullif(keep.engagement_level, ''), (select nullif(d.engagement_level, '') from public.companies d join _dupe_map m on m.dupe_id = d.id where m.keeper_id = keep.id and nullif(d.engagement_level, '') is not null limit 1), ''),
   organic_impressions = coalesce(keep.organic_impressions, (select d.organic_impressions from public.companies d join _dupe_map m on m.dupe_id = d.id where m.keeper_id = keep.id and d.organic_impressions is not null limit 1)),
   organic_engagements = coalesce(keep.organic_engagements, (select d.organic_engagements from public.companies d join _dupe_map m on m.dupe_id = d.id where m.keeper_id = keep.id and d.organic_engagements is not null limit 1)),
   paid_impressions = coalesce(keep.paid_impressions, (select d.paid_impressions from public.companies d join _dupe_map m on m.dupe_id = d.id where m.keeper_id = keep.id and d.paid_impressions is not null limit 1)),
