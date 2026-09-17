@@ -23,6 +23,11 @@
     --stage-gewonnen:#2fbf7a; --stage-gewonnen-bg:rgba(47,191,122,0.14);
     --stage-verloren:#E9167D; --stage-verloren-bg:rgba(233,22,125,0.14);
 
+    /* Lusha's actual brand purple (#600DFF, from their logo SVG), plus a
+       lighter tint for readable text/icons on this dark background. */
+    --lusha:#600DFF; --lusha-l:#A876FF;
+    --lusha-bg:rgba(96,13,255,0.14); --lusha-border:rgba(96,13,255,0.45);
+
     color-scheme: dark;
   }
   *{ box-sizing:border-box; }
@@ -76,6 +81,11 @@
   .icon-btn{ background:none; border:none; color:var(--dim); cursor:pointer; padding:5px; border-radius:6px; display:flex; }
   .icon-btn:hover{ color:var(--text); background:rgba(255,255,255,0.06); }
   .icon-btn.danger:hover{ color:var(--magenta); }
+  .icon-btn.lusha{ color:var(--lusha-l); }
+  .icon-btn.lusha:hover{ color:var(--lusha-l); background:var(--lusha-bg); }
+  .btn-lusha{ border-color:var(--lusha-border); background:var(--lusha-bg); color:var(--lusha-l); }
+  .btn-lusha:hover{ background:rgba(96,13,255,0.24); color:#C4A8FF; }
+  .lusha-badge{ display:inline-block; width:10px; height:10px; border-radius:3px; background:var(--lusha); margin-right:7px; vertical-align:middle; }
 
   /* ---- kpi cards ---- */
   .cards{ display:grid; grid-template-columns:repeat(4,1fr); gap:14px; margin-bottom:20px; }
@@ -876,7 +886,7 @@
     html += '  <div class="meta-block">';
     html += '    <span class="field-label">Company LinkedIn</span>';
     html += '    <input type="text" data-company-linkedin="' + c.id + '" placeholder="https://linkedin.com/company/…" value="' + esc(c.linkedin || "") + '">';
-    html += '    <button class="btn btn-quiet" style="margin-top:8px" data-lusha-company="' + c.id + '">Opzoeken via Lusha</button>';
+    html += '    <button class="btn btn-lusha" style="margin-top:8px" data-lusha-company="' + c.id + '">Opzoeken via Lusha</button>';
     html += '  </div>';
     html += '  <div class="meta-block">';
     html += '    <span class="field-label">Tags</span>';
@@ -951,7 +961,7 @@
     if (p.job_title) html += '      <div class="contact-role">' + esc(p.job_title) + '</div>';
     html += '    </div>';
     html += '    <div class="contact-actions">';
-    html += '      <button class="icon-btn" data-lusha-contact="' + companyId + '|' + p.id + '" title="Opzoeken via Lusha"><svg width="14" height="14" viewBox="0 0 15 15" fill="none"><circle cx="6.5" cy="6.5" r="4.5" stroke="currentColor" stroke-width="1.2"/><path d="M13 13L10 10" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/></svg></button>';
+    html += '      <button class="icon-btn lusha" data-lusha-contact="' + companyId + '|' + p.id + '" title="Opzoeken via Lusha"><svg width="14" height="14" viewBox="0 0 15 15" fill="none"><circle cx="6.5" cy="6.5" r="4.5" stroke="currentColor" stroke-width="1.2"/><path d="M13 13L10 10" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/></svg></button>';
     html += '      <button class="icon-btn" data-edit-contact="' + companyId + '|' + p.id + '" title="Bewerken"><svg width="14" height="14" viewBox="0 0 15 15" fill="none"><path d="M11.5 2.5L12.5 3.5L4.5 11.5L2 12L2.5 9.5L10.5 1.5L11.5 2.5Z" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/></svg></button>';
     html += '      <button class="icon-btn danger" data-delete-contact="' + companyId + '|' + p.id + '" title="Verwijderen"><svg width="14" height="14" viewBox="0 0 15 15" fill="none"><path d="M2.5 4H12.5M5.5 4V2.8C5.5 2.3 5.9 2 6.3 2H8.7C9.1 2 9.5 2.3 9.5 2.8V4M6 6.5V11M9 6.5V11M3.5 4L4 12C4 12.5 4.4 13 5 13H10C10.6 13 11 12.5 11 12L11.5 4" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/></svg></button>';
     html += '    </div>';
@@ -1358,7 +1368,7 @@
 
     var html = '';
     html += '<div class="modal-overlay" id="overlay"><div class="modal">';
-    html += '<h2>Lusha — ' + esc(result.fullName || ((result.firstName || "") + " " + (result.lastName || "")).trim()) + '</h2>';
+    html += '<h2><span class="lusha-badge"></span>Lusha — ' + esc(result.fullName || ((result.firstName || "") + " " + (result.lastName || "")).trim()) + '</h2>';
     if (!rows.length) {
       html += '<div class="empty-note">Geen bruikbare velden gevonden voor dit contact.</div>';
     } else {
@@ -1407,7 +1417,7 @@
 
     var html = '';
     html += '<div class="modal-overlay" id="overlay"><div class="modal">';
-    html += '<h2>Lusha — ' + esc(result.name || company.name) + '</h2>';
+    html += '<h2><span class="lusha-badge"></span>Lusha — ' + esc(result.name || company.name) + '</h2>';
     if (applyRows.length) {
       html += '<div style="display:flex;flex-direction:column;gap:10px;">';
       applyRows.forEach(function (r) { html = lushaApplyRow(html, r); });
