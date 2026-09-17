@@ -105,6 +105,12 @@
   .ranklist .empty:hover{ background:none; }
   .fu-overdue{ color:var(--magenta); }
   .fu-soon{ color:var(--blauw-l); }
+  .score{ display:inline-block; min-width:36px; text-align:center; padding:3px 8px; border-radius:8px; font-weight:700; font-size:12px; }
+  .s-hot{ background:rgba(233,22,125,0.18); color:var(--magenta); border:1px solid rgba(233,22,125,0.4); }
+  .s-warm{ background:rgba(25,157,217,0.18); color:#5ab6e6; border:1px solid rgba(25,157,217,0.4); }
+  .s-cool{ background:rgba(255,255,255,0.06); color:var(--muted); border:1px solid rgba(255,255,255,0.12); }
+  .engagement-grid{ display:grid; grid-template-columns:1fr 1fr; gap:6px 14px; font-size:12px; }
+  .engagement-grid .cf .k{ font-size:9.5px; }
 
   /* ---- tags ---- */
   .tag-chip-row{ display:flex; flex-wrap:wrap; gap:5px; align-items:center; }
@@ -340,10 +346,11 @@
           <th data-sort="stage">Fase<span class="sort-ind" data-sort-ind="stage"></span></th>
           <th data-sort="contact_count">Contacten<span class="sort-ind" data-sort-ind="contact_count"></span></th>
           <th data-sort="next_follow_up">Vervolgdatum<span class="sort-ind" data-sort-ind="next_follow_up"></span></th>
+          <th data-sort="score">Score<span class="sort-ind" data-sort-ind="score"></span></th>
           <th style="width:40px"></th>
         </tr>
       </thead>
-      <tbody id="company-tbody"><tr><td colspan="6"><div class="loading">Gegevens laden…</div></td></tr></tbody>
+      <tbody id="company-tbody"><tr><td colspan="7"><div class="loading">Gegevens laden…</div></td></tr></tbody>
     </table>
   </div>
 </div>
@@ -399,13 +406,31 @@
   }
   function tagById(id) { return state.tags.find(function (t) { return t.id === id; }); }
 
-  var TEMPLATE_COLUMNS = [
-    "Company", "Company LinkedIn", "Fase", "Bedrijfsnotities",
-    "First Name", "Last Name", "Job Title", "Gender",
-    "Email", "Email 2", "Mobile Phone", "Work Phone",
-    "Beller", "Vervolg", "Vervolgdatum",
-    "Notities", "Belaantekeningen", "Mogelijk interessante hook"
+  // Company-level LinkedIn Page engagement metrics (from a LinkedIn export,
+  // via tools/migrate_linkedin_engagement.py) — [template column, db column].
+  // Blank/null on any company this data hasn't been imported for.
+  var ENGAGEMENT_FIELDS = [
+    ["Engagement Level", "engagement_level"],
+    ["Organic Impressions", "organic_impressions"],
+    ["Organic Engagements", "organic_engagements"],
+    ["Paid Impressions", "paid_impressions"],
+    ["Paid Clicks", "paid_clicks"],
+    ["Paid Engagements", "paid_engagements"],
+    ["Paid Video Views", "paid_video_views"],
+    ["Paid Conversions", "paid_conversions"],
+    ["Paid Leads", "paid_leads"],
+    ["Paid Qualified Leads", "paid_qualified_leads"],
+    ["Cost Per Qualified Lead", "cost_per_qualified_lead"]
   ];
+
+  var TEMPLATE_COLUMNS = ["Company", "Company LinkedIn", "Fase", "Bedrijfsnotities"]
+    .concat(ENGAGEMENT_FIELDS.map(function (f) { return f[0]; }))
+    .concat([
+      "First Name", "Last Name", "Job Title", "Gender",
+      "Email", "Email 2", "Mobile Phone", "Work Phone",
+      "Beller", "Vervolg", "Vervolgdatum",
+      "Notities", "Belaantekeningen", "Mogelijk interessante hook"
+    ]);
 
   function $(sel, root) { return (root || document).querySelector(sel); }
   function esc(s) {
@@ -520,6 +545,10 @@
     return d.toLocaleDateString("nl-NL", { day: "2-digit", month: "2-digit", year: "numeric" });
   }
 
+  function numOrEmpty(n) {
+    return n == null ? "" : String(n);
+  }
+
   // The earliest Vervolgdatum among a company's contacts (ISO strings sort
   // correctly as plain text, so no Date parsing is needed to find the min).
   function nextFollowUp(companyId) {
@@ -531,10 +560,44 @@
     return dates[0];
   }
 
+  // Heuristic "engagement score" (0–100) from a LinkedIn Page export
+  // (see tools/migrate_linkedin_engagement.py). A display/sort aid computed
+  // live from the raw metrics, not stored — retuning the weights below
+  // takes effect immediately, with no re-import needed. Weighted toward
+  // what actually signals a real opportunity: qualified leads count far
+  // more than raw impressions, a cheap cost-per-qualified-lead is a bonus
+  // on top of that rather than a requirement on its own, and LinkedIn's own
+  // Engagement Level classification acts as a light tie-breaker.
+  // Returns null (not 0) for a company with no engagement data at all, so
+  // "never measured" stays visibly different from "measured, scored zero".
+  function engagementScore(c) {
+    var hasAny = ENGAGEMENT_FIELDS.some(function (f) { return c[f[1]] != null; });
+    if (!hasAny) return null;
+    var score = 0;
+    var levelPoints = { high: 20, medium: 12, low: 5 };
+    score += levelPoints[(c.engagement_level || "").toLowerCase()] || 0;
+    if (c.organic_impressions > 0) score += Math.min(15, (c.organic_engagements / c.organic_impressions) * 300);
+    if (c.paid_impressions > 0) score += Math.min(15, (c.paid_engagements / c.paid_impressions) * 200);
+    score += Math.min(30, (c.paid_qualified_leads || 0) * 10);
+    score += Math.min(10, (c.paid_leads || 0) * 2);
+    if (c.paid_qualified_leads > 0 && c.cost_per_qualified_lead > 0) {
+      if (c.cost_per_qualified_lead < 50) score += 10;
+      else if (c.cost_per_qualified_lead < 150) score += 5;
+    }
+    return Math.max(0, Math.min(100, Math.round(score)));
+  }
+  function scoreClass(score) {
+    if (score == null) return "s-cool";
+    if (score >= 70) return "s-hot";
+    if (score >= 40) return "s-warm";
+    return "s-cool";
+  }
+
   function sortValue(c, field) {
     if (field === "stage") return STAGES.findIndex(function (s) { return s.key === c.stage; });
     if (field === "contact_count") return c.contact_count || 0;
     if (field === "next_follow_up") return nextFollowUp(c.id) || "9999-99-99"; // undated sorts last, ascending
+    if (field === "score") { var s = engagementScore(c); return s == null ? -1 : s; } // unmeasured sorts lowest
     return (c.name || "").toLowerCase();
   }
 
@@ -724,7 +787,7 @@
     var list = filteredCompanies();
     var root = $("#company-tbody");
     if (!list.length) {
-      root.innerHTML = '<tr><td colspan="6"><div class="empty-state">Geen bedrijven gevonden. Pas je zoekopdracht aan of voeg een nieuw bedrijf toe.</div></td></tr>';
+      root.innerHTML = '<tr><td colspan="7"><div class="empty-state">Geen bedrijven gevonden. Pas je zoekopdracht aan of voeg een nieuw bedrijf toe.</div></td></tr>';
       return;
     }
     root.innerHTML = list.map(renderCompanyRows).join("");
@@ -749,10 +812,12 @@
     var nextStatus = nextDate ? followUpStatus(nextDate) : "";
     var nextCls = nextStatus === "overdue" ? " fu-overdue" : (nextStatus === "week" ? " fu-soon" : "");
     html += '  <td class="tnum' + nextCls + '">' + (nextDate ? esc(formatDate(nextDate)) : '<span style="color:var(--dim)">—</span>') + '</td>';
+    var score = engagementScore(c);
+    html += '  <td>' + (score == null ? '<span style="color:var(--dim)">—</span>' : '<span class="score tnum ' + scoreClass(score) + '">' + score + '</span>') + '</td>';
     html += '  <td class="actions-cell"><button class="icon-btn danger" data-delete-company="' + c.id + '" title="Bedrijf verwijderen" onclick="event.stopPropagation()"><svg width="14" height="14" viewBox="0 0 15 15" fill="none"><path d="M2.5 4H12.5M5.5 4V2.8C5.5 2.3 5.9 2 6.3 2H8.7C9.1 2 9.5 2.3 9.5 2.8V4M6 6.5V11M9 6.5V11M3.5 4L4 12C4 12.5 4.4 13 5 13H10C10.6 13 11 12.5 11 12L11.5 4" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/></svg></button></td>';
     html += '</tr>';
     if (isOpen) {
-      html += '<tr class="detail"><td colspan="6"><div class="detail-inner">' + renderCompanyDetail(c) + '</div></td></tr>';
+      html += '<tr class="detail"><td colspan="7"><div class="detail-inner">' + renderCompanyDetail(c) + '</div></td></tr>';
     }
     return html;
   }
@@ -785,6 +850,25 @@
     html += '      <button class="btn btn-quiet" data-tag-add="' + c.id + '">+ Toevoegen</button>';
     html += '    </div>';
     html += '  </div>';
+    var engagementScoreVal = engagementScore(c);
+    if (engagementScoreVal != null) {
+      html += '  <div class="meta-block">';
+      html += '    <span class="field-label">LinkedIn-betrokkenheid <span class="score tnum ' + scoreClass(engagementScoreVal) + '" style="margin-left:6px">' + engagementScoreVal + '</span></span>';
+      html += '    <div class="engagement-grid">';
+      html += fieldBlock("Niveau", c.engagement_level);
+      html += fieldBlock("Org. impressies", numOrEmpty(c.organic_impressions), { mono: true });
+      html += fieldBlock("Org. interacties", numOrEmpty(c.organic_engagements), { mono: true });
+      html += fieldBlock("Betaald impressies", numOrEmpty(c.paid_impressions), { mono: true });
+      html += fieldBlock("Betaald kliks", numOrEmpty(c.paid_clicks), { mono: true });
+      html += fieldBlock("Betaald interacties", numOrEmpty(c.paid_engagements), { mono: true });
+      html += fieldBlock("Video views", numOrEmpty(c.paid_video_views), { mono: true });
+      html += fieldBlock("Conversies", numOrEmpty(c.paid_conversions), { mono: true });
+      html += fieldBlock("Leads", numOrEmpty(c.paid_leads), { mono: true });
+      html += fieldBlock("Qualified leads", numOrEmpty(c.paid_qualified_leads), { mono: true });
+      html += fieldBlock("Kost / qualified lead", c.cost_per_qualified_lead != null ? "€ " + c.cost_per_qualified_lead : "", { mono: true });
+      html += '    </div>';
+      html += '  </div>';
+    }
     html += '</div>';
 
     html += '<div class="contacts-col">';
@@ -1191,13 +1275,33 @@
     return isNaN(d.getTime()) ? null : d.toISOString().slice(0, 10);
   }
 
+  // Builds one sheet row in TEMPLATE_COLUMNS order from a {column name:
+  // value} object, rather than a fixed-position array — with 18+ columns
+  // now (11 of them the optional engagement metrics), a positional array
+  // is too easy to miscount when a column gets added later.
+  function rowToArray(obj) {
+    return TEMPLATE_COLUMNS.map(function (col) { return obj[col] != null ? obj[col] : ""; });
+  }
+
   function downloadTemplate() {
-    var example = ["Van Herck Verpakkingen", "https://www.linkedin.com/company/van-herck-verpakkingen", "Gecontacteerd",
-      "Bezig met vervanging van hun huidige leverancier.", "Els", "Verhoeven", "Inkoopmanager", "Vrouw",
-      "els.verhoeven@voorbeeld.be", "", "+32 478 12 34 56", "+32 3 210 00 10", "Mathieu",
-      "Bellen voor prijsofferte", "2026-09-20", "Beslisser voor inkoop verpakkingsmateriaal.",
-      "Positief gesprek, vraagt vergelijkende offerte.", "Zoekt duurzamere verpakking i.k.v. ESG-rapportage."];
-    var ws = XLSX.utils.aoa_to_sheet([TEMPLATE_COLUMNS, example]);
+    var example = {
+      "Company": "Van Herck Verpakkingen",
+      "Company LinkedIn": "https://www.linkedin.com/company/van-herck-verpakkingen",
+      "Fase": "Gecontacteerd",
+      "Bedrijfsnotities": "Bezig met vervanging van hun huidige leverancier.",
+      "Engagement Level": "Medium",
+      "Organic Impressions": 4200, "Organic Engagements": 165,
+      "Paid Impressions": 9800, "Paid Clicks": 210, "Paid Engagements": 260,
+      "Paid Video Views": 340, "Paid Conversions": 12, "Paid Leads": 6,
+      "Paid Qualified Leads": 2, "Cost Per Qualified Lead": 84.5,
+      "First Name": "Els", "Last Name": "Verhoeven", "Job Title": "Inkoopmanager", "Gender": "Vrouw",
+      "Email": "els.verhoeven@voorbeeld.be", "Mobile Phone": "+32 478 12 34 56", "Work Phone": "+32 3 210 00 10",
+      "Beller": "Mathieu", "Vervolg": "Bellen voor prijsofferte", "Vervolgdatum": "2026-09-20",
+      "Notities": "Beslisser voor inkoop verpakkingsmateriaal.",
+      "Belaantekeningen": "Positief gesprek, vraagt vergelijkende offerte.",
+      "Mogelijk interessante hook": "Zoekt duurzamere verpakking i.k.v. ESG-rapportage."
+    };
+    var ws = XLSX.utils.aoa_to_sheet([TEMPLATE_COLUMNS, rowToArray(example)]);
     var wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, "Leads");
     XLSX.writeFile(wb, "leadbeheer-sjabloon.xlsx");
@@ -1207,19 +1311,19 @@
     var rows = [TEMPLATE_COLUMNS];
     state.companies.forEach(function (c) {
       var contacts = state.contactsByCompany[c.id] || [];
-      var stageLabel = stageInfo(c.stage).label;
+      var base = { "Company": c.name, "Company LinkedIn": c.linkedin, "Fase": stageInfo(c.stage).label, "Bedrijfsnotities": c.notes };
+      ENGAGEMENT_FIELDS.forEach(function (f) { base[f[0]] = c[f[1]] != null ? c[f[1]] : ""; });
       if (!contacts.length) {
-        rows.push([c.name, c.linkedin, stageLabel, c.notes, "", "", "", "", "", "", "", "", "", "", "", "", "", ""]);
+        rows.push(rowToArray(base));
         return;
       }
       contacts.forEach(function (p) {
-        rows.push([
-          c.name, c.linkedin, stageLabel, c.notes,
-          p.first_name, p.last_name, p.job_title, p.gender,
-          p.email, p.email2, p.mobile_phone, p.work_phone,
-          p.beller, p.vervolg, p.follow_up_date || "",
-          p.notities, p.belaantekeningen, p.hook
-        ]);
+        rows.push(rowToArray(Object.assign({}, base, {
+          "First Name": p.first_name, "Last Name": p.last_name, "Job Title": p.job_title, "Gender": p.gender,
+          "Email": p.email, "Email 2": p.email2, "Mobile Phone": p.mobile_phone, "Work Phone": p.work_phone,
+          "Beller": p.beller, "Vervolg": p.vervolg, "Vervolgdatum": p.follow_up_date || "",
+          "Notities": p.notities, "Belaantekeningen": p.belaantekeningen, "Mogelijk interessante hook": p.hook
+        })));
       });
     });
     var ws = XLSX.utils.aoa_to_sheet(rows);
@@ -1254,6 +1358,12 @@
   // in the same file — so uploading the same sheet twice is harmless.
   function processImportRows(rawRows) {
     function val(row, key) { return String(row[key] == null ? "" : row[key]).trim(); }
+    function numVal(row, key) {
+      var raw = row[key];
+      if (raw === "" || raw == null) return null;
+      var n = Number(raw);
+      return isNaN(n) ? null : n;
+    }
 
     var existingCompanyByKey = {};
     state.companies.forEach(function (c) { existingCompanyByKey[(c.name || "").trim().toLowerCase()] = c; });
@@ -1290,6 +1400,12 @@
       if (!g.linkedin) g.linkedin = val(row, "Company LinkedIn");
       if (!g.stage) g.stage = stageKeyFromLabel(val(row, "Fase"));
       if (!g.notes) g.notes = val(row, "Bedrijfsnotities");
+      ENGAGEMENT_FIELDS.forEach(function (f) {
+        var col = f[0], dbKey = f[1];
+        if (g[dbKey] != null) return; // first row with an actual value for this field wins
+        var v = dbKey === "engagement_level" ? (val(row, col) || null) : numVal(row, col);
+        if (v != null) g[dbKey] = v;
+      });
 
       var firstName = val(row, "First Name"), lastName = val(row, "Last Name");
       if (!firstName && !lastName) return; // company-only row — nothing to add as a contact
@@ -1375,11 +1491,33 @@
     $("#modal-save").addEventListener("click", function () { runImport(groups); });
   }
 
+  function engagementPatch(g) {
+    var patch = {};
+    ENGAGEMENT_FIELDS.forEach(function (f) { if (g[f[1]] != null) patch[f[1]] = g[f[1]]; });
+    return patch;
+  }
+
   function runImport(groups) {
     var toCreate = groups.filter(function (g) { return !g.existing; });
     var createPayload = toCreate.map(function (g) {
-      return { name: g.name, linkedin: g.linkedin, stage: g.stage || "nieuw", notes: g.notes };
+      return Object.assign({ name: g.name, linkedin: g.linkedin, stage: g.stage || "nieuw", notes: g.notes }, engagementPatch(g));
     });
+
+    // Existing companies only ever get their engagement metrics refreshed by
+    // an import (never name/stage/notes, to avoid an engagement-only sheet
+    // silently reverting hand-edited fields) — so a re-run of, say, a
+    // monthly LinkedIn export just updates the numbers on companies that
+    // are already tracked here.
+    var toRefresh = groups.filter(function (g) { return g.existing; })
+      .map(function (g) { return { id: g.existing.id, patch: engagementPatch(g) }; })
+      .filter(function (r) { return Object.keys(r.patch).length > 0; });
+
+    function refreshEngagement() {
+      if (!toRefresh.length) return Promise.resolve();
+      return Promise.all(toRefresh.map(function (r) {
+        return supabase.from("companies").update(r.patch).eq("id", r.id);
+      }));
+    }
 
     function insertContacts(nameToId) {
       var contactPayload = [];
@@ -1403,12 +1541,14 @@
       });
     }
 
-    if (!createPayload.length) { insertContacts({}); return; }
-    supabase.from("companies").insert(createPayload).select().then(function (res) {
-      if (res.error) { console.error(res.error); toast("Import van bedrijven mislukt: " + res.error.message); return; }
-      var nameToId = {};
-      (res.data || []).forEach(function (row) { nameToId[(row.name || "").toLowerCase()] = row.id; });
-      insertContacts(nameToId);
+    refreshEngagement().then(function () {
+      if (!createPayload.length) { insertContacts({}); return; }
+      supabase.from("companies").insert(createPayload).select().then(function (res) {
+        if (res.error) { console.error(res.error); toast("Import van bedrijven mislukt: " + res.error.message); return; }
+        var nameToId = {};
+        (res.data || []).forEach(function (row) { nameToId[(row.name || "").toLowerCase()] = row.id; });
+        insertContacts(nameToId);
+      });
     });
   }
 

@@ -47,8 +47,9 @@ already use its column names. For older exports with different headers,
 - `migrate_plaats_regio.py` — `Notities, Telefoon 1, Naam, Functie, Bedrijf, Plaats / regio, E-mail, Telefoon 2, LinkedIn`
 - `migrate_land.py` — `Comment, Telefoonnummer, Naam, Functie, Bedrijf, Land, Email, LinkedIn URL`
 - `migrate_native_format.py` — `Notities, Beller, Vervolg, Belaantekeningen, Mogelijk interessante hook, Id, First Name, Last Name, Gender, Email, Email 2, Mobile Phone, Work Phone, Company, Company LinkedIn, Job Function`
+- `migrate_linkedin_engagement.py` — a LinkedIn Company Page engagement export (`.csv`): `Company name, Company page URL, Engagement level, Organic impressions, Organic engagements, Paid impressions, Paid clicks, Paid engagements, Paid video views, Paid conversions, Paid leads, Paid qualified leads, Cost per qualified lead`. Unlike the others, this source is company-level metrics only (no contact people) — see [Engagement score](#engagement-score-from-linkedin-data) below.
 
-Each reads one `.xlsx` and writes a new one shaped like the app's template —
+Each reads one file (`.xlsx` or, for the LinkedIn one, `.csv`) and writes a new `.xlsx` shaped like the app's template —
 the docstring at the top of each script spells out exactly which source
 column goes where, and the judgment calls that had no clean answer (splitting
 a single "Naam" field, a personal LinkedIn URL with nowhere else to go).
@@ -64,6 +65,24 @@ python tools/migrate_plaats_regio.py path/to/export.xlsx
 Then upload the `_migrated.xlsx` file it produces via "Importeren" in the
 app, same as any other file — that step already checks for duplicates before
 writing anything.
+
+## Engagement score (from LinkedIn data)
+
+Importing a `migrate_linkedin_engagement.py` output stores that company's raw
+LinkedIn metrics (impressions, clicks, leads, cost per qualified lead, ...).
+Re-uploading a later export for a company already in Leadbeheer only ever
+refreshes those numbers — it never touches its Fase, notes, or LinkedIn URL.
+
+The app then computes a 0–100 "Score" for any company with at least one
+metric, shown as a sortable column and, expanded, alongside the raw numbers
+it's built from. The score itself isn't stored anywhere — it's recalculated
+live from `engagementScore()` in `index.html` every time the page renders, so
+adjusting its weights is a one-line code change with no re-import needed. It
+currently weighs, roughly: qualified leads heavily, a low cost per qualified
+lead as a bonus on top of that, engagement *rate* (not raw impressions) on
+organic and paid content, and LinkedIn's own Engagement Level as a light
+tie-breaker. A company with no engagement data at all shows "—", not a 0, so
+"never measured" stays visually distinct from "measured, scored zero".
 
 ## Note on the Claude Artifact version
 

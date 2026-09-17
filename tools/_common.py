@@ -10,9 +10,19 @@ import pandas as pd
 
 # Must match TEMPLATE_COLUMNS in index.html exactly (same order, same
 # spelling) -- this is what "Importeren" in the app expects as the header
-# row.
+# row. The ENGAGEMENT_COLUMNS block is optional company-level LinkedIn Page
+# metrics (see migrate_linkedin_engagement.py) -- blank on any row from a
+# source that doesn't have them, which the app treats as "not measured".
+ENGAGEMENT_COLUMNS = [
+    "Engagement Level", "Organic Impressions", "Organic Engagements",
+    "Paid Impressions", "Paid Clicks", "Paid Engagements", "Paid Video Views",
+    "Paid Conversions", "Paid Leads", "Paid Qualified Leads",
+    "Cost Per Qualified Lead",
+]
+
 TEMPLATE_COLUMNS = [
     "Company", "Company LinkedIn", "Fase", "Bedrijfsnotities",
+    *ENGAGEMENT_COLUMNS,
     "First Name", "Last Name", "Job Title", "Gender",
     "Email", "Email 2", "Mobile Phone", "Work Phone",
     "Beller", "Vervolg", "Vervolgdatum",
@@ -60,8 +70,7 @@ def append_note(existing, label, value):
     return f"{existing}\n{tag}" if existing else tag
 
 
-def read_source(path, required_columns):
-    df = pd.read_excel(path, dtype=str)
+def _require_columns(df, required_columns):
     df.columns = [str(c).strip() for c in df.columns]
     missing = [c for c in required_columns if c not in df.columns]
     if missing:
@@ -71,6 +80,42 @@ def read_source(path, required_columns):
             f"Columns found: {', '.join(df.columns)}"
         )
     return df
+
+
+def read_source(path, required_columns):
+    return _require_columns(pd.read_excel(path, dtype=str), required_columns)
+
+
+def read_csv_source(path, required_columns):
+    return _require_columns(pd.read_csv(path, dtype=str), required_columns)
+
+
+def to_number(value):
+    """Parse a metric cell (impressions, clicks, leads, ...) to an int, or
+    None when blank/unparseable -- None (not 0) so "not in this export"
+    stays distinguishable from "measured, was zero"."""
+    text = clean(value)
+    if not text:
+        return None
+    try:
+        return int(float(text.replace(",", "")))
+    except ValueError:
+        return None
+
+
+def to_money(value):
+    """Parse a cost cell that may carry a currency symbol or thousands
+    separator (e.g. "$1,234.50") to a float, or None when blank/unparseable."""
+    text = clean(value)
+    if not text:
+        return None
+    stripped = "".join(ch for ch in text if ch.isdigit() or ch in ".-")
+    if not stripped:
+        return None
+    try:
+        return float(stripped)
+    except ValueError:
+        return None
 
 
 def write_output(rows, out_path):

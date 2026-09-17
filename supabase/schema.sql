@@ -50,6 +50,24 @@ create table if not exists public.contacts (
 alter table public.contacts add column if not exists job_title text not null default '';
 alter table public.contacts add column if not exists follow_up_date date;
 
+-- Company-level LinkedIn Page engagement metrics (from a LinkedIn export,
+-- via tools/migrate_linkedin_engagement.py). Nullable, not defaulted to 0 —
+-- a company this data was never imported for should stay distinguishable
+-- from one that was measured and scored zero. The app computes a 0-100
+-- "engagement score" live from these at display time; nothing here stores
+-- that score, so retuning its weights needs no re-import.
+alter table public.companies add column if not exists engagement_level text not null default '';
+alter table public.companies add column if not exists organic_impressions integer;
+alter table public.companies add column if not exists organic_engagements integer;
+alter table public.companies add column if not exists paid_impressions integer;
+alter table public.companies add column if not exists paid_clicks integer;
+alter table public.companies add column if not exists paid_engagements integer;
+alter table public.companies add column if not exists paid_video_views integer;
+alter table public.companies add column if not exists paid_conversions integer;
+alter table public.companies add column if not exists paid_leads integer;
+alter table public.companies add column if not exists paid_qualified_leads integer;
+alter table public.companies add column if not exists cost_per_qualified_lead numeric;
+
 create index if not exists idx_contacts_company on public.contacts(company_id);
 
 -- User-created labels (like mailbox tags), many-to-many with companies.
