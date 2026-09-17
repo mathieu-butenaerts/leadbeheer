@@ -287,7 +287,7 @@
     </div>
     <div class="topmeta">
       <div class="live"><span class="dot" id="liveDot"></span><span id="liveText">Verbinden…</span></div>
-      <button class="btn btn-quiet" id="btn-add-company">
+      <button class="btn btn-quiet" id="btn-add-company" disabled title="Gegevens laden…">
         <svg width="13" height="13" viewBox="0 0 15 15" fill="none"><path d="M7.5 2V13M2 7.5H13" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
         Nieuw bedrijf
       </button>
@@ -331,8 +331,8 @@
     <div class="filters-spacer"></div>
     <div class="filters-actions">
       <button class="btn btn-quiet" id="btn-template">Sjabloon downloaden</button>
-      <button class="btn btn-quiet" id="btn-import">Importeren</button>
-      <button class="btn btn-quiet" id="btn-export">Exporteren</button>
+      <button class="btn btn-quiet" id="btn-import" disabled title="Gegevens laden…">Importeren</button>
+      <button class="btn btn-quiet" id="btn-export" disabled title="Gegevens laden…">Exporteren</button>
       <input type="file" id="import-file" accept=".xlsx,.xls" style="display:none">
     </div>
   </div>
@@ -437,6 +437,16 @@
     return String(s == null ? "" : s).replace(/[&<>"']/g, function (c) {
       return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c];
     });
+  }
+  // Matching key for a company name during import: trims, lowercases, and
+  // collapses internal whitespace runs, plus Unicode-normalizes to NFC —
+  // a name round-tripped through a source file with a different encoding
+  // fallback (see tools/_common.py's cp1252/latin-1 handling) can otherwise
+  // carry a non-breaking space, a decomposed accent, or doubled spaces that
+  // look identical on screen but fail a plain === match, silently creating
+  // a duplicate company instead of matching the existing one.
+  function normalizeName(s) {
+    return String(s == null ? "" : s).normalize("NFC").replace(/\s+/g, " ").trim().toLowerCase();
   }
   function toast(msg) {
     var el = $("#toast");
@@ -1366,7 +1376,7 @@
     }
 
     var existingCompanyByKey = {};
-    state.companies.forEach(function (c) { existingCompanyByKey[(c.name || "").trim().toLowerCase()] = c; });
+    state.companies.forEach(function (c) { existingCompanyByKey[normalizeName(c.name)] = c; });
 
     var existingContactKeys = {};
     Object.keys(state.contactsByCompany).forEach(function (companyId) {
@@ -1387,7 +1397,7 @@
     rawRows.forEach(function (row) {
       var companyName = val(row, "Company");
       if (!companyName) { skippedNoCompany++; return; }
-      var key = companyName.toLowerCase();
+      var key = normalizeName(companyName);
       if (!groups[key]) {
         groups[key] = {
           name: companyName, linkedin: "", stage: "", notes: "",
@@ -1522,7 +1532,7 @@
     function insertContacts(nameToId) {
       var contactPayload = [];
       groups.forEach(function (g) {
-        var companyId = g.existing ? g.existing.id : nameToId[g.name.toLowerCase()];
+        var companyId = g.existing ? g.existing.id : nameToId[normalizeName(g.name)];
         if (!companyId) return;
         g.contacts.forEach(function (c) {
           if (!c.include) return;
@@ -1546,7 +1556,7 @@
       supabase.from("companies").insert(createPayload).select().then(function (res) {
         if (res.error) { console.error(res.error); toast("Import van bedrijven mislukt: " + res.error.message); return; }
         var nameToId = {};
-        (res.data || []).forEach(function (row) { nameToId[(row.name || "").toLowerCase()] = row.id; });
+        (res.data || []).forEach(function (row) { nameToId[normalizeName(row.name)] = row.id; });
         insertContacts(nameToId);
       });
     });
@@ -1615,6 +1625,15 @@
       state.tags = tagsRes.data || [];
       state.companyTagIds = indexCompanyTags(companyTagsRes.data);
       $("#liveText").textContent = "Live · verbonden";
+      // Only now is state.companies actually populated — enabling these any
+      // earlier let Importeren run against an empty company list, so every
+      // row in the sheet looked "new" and got inserted as a duplicate
+      // instead of being matched to what's already there.
+      ["btn-add-company", "btn-import", "btn-export"].forEach(function (id) {
+        var el = $("#" + id);
+        el.removeAttribute("disabled");
+        el.removeAttribute("title");
+      });
       render();
     });
 
