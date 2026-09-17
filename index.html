@@ -876,6 +876,7 @@
     html += '  <div class="meta-block">';
     html += '    <span class="field-label">Company LinkedIn</span>';
     html += '    <input type="text" data-company-linkedin="' + c.id + '" placeholder="https://linkedin.com/company/…" value="' + esc(c.linkedin || "") + '">';
+    html += '    <button class="btn btn-quiet" style="margin-top:8px" data-lusha-company="' + c.id + '">Opzoeken via Lusha</button>';
     html += '  </div>';
     html += '  <div class="meta-block">';
     html += '    <span class="field-label">Tags</span>';
@@ -950,6 +951,7 @@
     if (p.job_title) html += '      <div class="contact-role">' + esc(p.job_title) + '</div>';
     html += '    </div>';
     html += '    <div class="contact-actions">';
+    html += '      <button class="icon-btn" data-lusha-contact="' + companyId + '|' + p.id + '" title="Opzoeken via Lusha"><svg width="14" height="14" viewBox="0 0 15 15" fill="none"><circle cx="6.5" cy="6.5" r="4.5" stroke="currentColor" stroke-width="1.2"/><path d="M13 13L10 10" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/></svg></button>';
     html += '      <button class="icon-btn" data-edit-contact="' + companyId + '|' + p.id + '" title="Bewerken"><svg width="14" height="14" viewBox="0 0 15 15" fill="none"><path d="M11.5 2.5L12.5 3.5L4.5 11.5L2 12L2.5 9.5L10.5 1.5L11.5 2.5Z" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/></svg></button>';
     html += '      <button class="icon-btn danger" data-delete-contact="' + companyId + '|' + p.id + '" title="Verwijderen"><svg width="14" height="14" viewBox="0 0 15 15" fill="none"><path d="M2.5 4H12.5M5.5 4V2.8C5.5 2.3 5.9 2 6.3 2H8.7C9.1 2 9.5 2.3 9.5 2.8V4M6 6.5V11M9 6.5V11M3.5 4L4 12C4 12.5 4.4 13 5 13H10C10.6 13 11 12.5 11 12L11.5 4" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/></svg></button>';
     html += '    </div>';
@@ -1017,6 +1019,19 @@
         var parts = el.getAttribute("data-edit-contact").split("|");
         var contact = (state.contactsByCompany[parts[0]] || []).find(function (p) { return p.id === parts[1]; });
         openContactModal(parts[0], contact || null);
+      });
+    });
+    Array.prototype.forEach.call(root.querySelectorAll("[data-lusha-contact]"), function (el) {
+      el.addEventListener("click", function () {
+        var parts = el.getAttribute("data-lusha-contact").split("|");
+        var contact = (state.contactsByCompany[parts[0]] || []).find(function (p) { return p.id === parts[1]; });
+        if (contact) lushaLookupContact(parts[0], contact);
+      });
+    });
+    Array.prototype.forEach.call(root.querySelectorAll("[data-lusha-company]"), function (el) {
+      el.addEventListener("click", function () {
+        var company = state.companies.find(function (c) { return c.id === el.getAttribute("data-lusha-company"); });
+        if (company) lushaLookupCompany(company);
       });
     });
     Array.prototype.forEach.call(root.querySelectorAll("[data-delete-contact]"), function (el) {
@@ -1287,6 +1302,157 @@
         toast(isEdit ? "Opgeslagen" : "Contactpersoon toegevoegd"); closeModal();
       });
     });
+  }
+
+  // ---------- lusha ----------
+  // Calls the lusha-lookup Edge Function (see supabase/functions/lusha-lookup),
+  // which holds the actual Lusha API key server-side — nothing here ever
+  // sees or sends it. Field names below (emails[].email, phones[].type,
+  // jobTitle.title, employeeCount.exact/min/max, socialLinks.linkedin, ...)
+  // come straight from Lusha's published V3 OpenAPI schema, not a guess.
+
+  function lushaLookupContact(companyId, contact) {
+    var company = state.companies.find(function (c) { return c.id === companyId; });
+    var firstName = contact.first_name || "", lastName = contact.last_name || "";
+    if (!firstName && !lastName) { toast("Geen naam om op te zoeken"); return; }
+    toast("Bezig met opzoeken via Lusha…");
+    supabase.functions.invoke("lusha-lookup", {
+      body: { type: "contact", query: { firstName: firstName, lastName: lastName, companyName: company ? company.name : "" } }
+    }).then(function (res) {
+      if (res.error) { console.error(res.error); toast("Lusha-opzoeking mislukt"); return; }
+      var result = ((res.data || {}).results || [])[0];
+      if (!result || result.error) { toast("Geen resultaat gevonden op Lusha"); return; }
+      openLushaContactModal(contact, result);
+    });
+  }
+
+  function lushaLookupCompany(company) {
+    toast("Bezig met opzoeken via Lusha…");
+    supabase.functions.invoke("lusha-lookup", {
+      body: { type: "company", query: { name: company.name } }
+    }).then(function (res) {
+      if (res.error) { console.error(res.error); toast("Lusha-opzoeking mislukt"); return; }
+      var result = ((res.data || {}).results || [])[0];
+      if (!result || result.error) { toast("Geen resultaat gevonden op Lusha"); return; }
+      openLushaCompanyModal(company, result);
+    });
+  }
+
+  function lushaApplyRow(html, row) {
+    return html + '<div style="display:flex;justify-content:space-between;align-items:center;gap:10px;border:1px solid var(--border);border-radius:8px;padding:9px 12px;">' +
+      '<div><span class="field-label" style="margin-bottom:2px;">' + esc(row.label) + '</span><div class="tnum" style="word-break:break-all;">' + esc(String(row.value)) + '</div></div>' +
+      '<button class="btn btn-quiet" data-lusha-apply="' + row.field + '">Toepassen</button></div>';
+  }
+
+  function openLushaContactModal(contact, result) {
+    var emailWork = (result.emails || []).find(function (e) { return e.type === "work"; }) || (result.emails || [])[0];
+    var phoneMobile = (result.phones || []).find(function (p) { return p.type === "mobile"; });
+    var phoneWork = (result.phones || []).find(function (p) { return p.type === "work" || p.type === "direct"; });
+    var jobTitle = result.jobTitle && result.jobTitle.title;
+
+    var rows = [];
+    if (emailWork) rows.push({ label: "E-mail", value: emailWork.email, field: "email" });
+    if (phoneMobile) rows.push({ label: "Mobiel", value: phoneMobile.number, field: "mobile_phone" });
+    if (phoneWork) rows.push({ label: "Vast", value: phoneWork.number, field: "work_phone" });
+    if (jobTitle) rows.push({ label: "Functie", value: jobTitle, field: "job_title" });
+
+    var html = '';
+    html += '<div class="modal-overlay" id="overlay"><div class="modal">';
+    html += '<h2>Lusha — ' + esc(result.fullName || ((result.firstName || "") + " " + (result.lastName || "")).trim()) + '</h2>';
+    if (!rows.length) {
+      html += '<div class="empty-note">Geen bruikbare velden gevonden voor dit contact.</div>';
+    } else {
+      html += '<div style="display:flex;flex-direction:column;gap:10px;">';
+      rows.forEach(function (r) { html = lushaApplyRow(html, r); });
+      html += '</div>';
+    }
+    html += '<div class="modal-actions"><button class="btn btn-quiet" id="modal-cancel">Sluiten</button></div>';
+    html += '</div></div>';
+    $("#modal-root").innerHTML = html;
+    $("#overlay").addEventListener("click", function (e) { if (e.target.id === "overlay") closeModal(); });
+    $("#modal-cancel").addEventListener("click", closeModal);
+    Array.prototype.forEach.call($("#modal-root").querySelectorAll("[data-lusha-apply]"), function (btn) {
+      btn.addEventListener("click", function () {
+        var field = btn.getAttribute("data-lusha-apply");
+        var row = rows.find(function (r) { return r.field === field; });
+        var patch = {};
+        patch[field] = row.value;
+        supabase.from("contacts").update(patch).eq("id", contact.id).then(function (res) {
+          if (res.error) { console.error(res.error); toast("Toepassen mislukt"); return; }
+          toast(row.label + " toegepast");
+          btn.textContent = "Toegepast";
+          btn.disabled = true;
+        });
+      });
+    });
+  }
+
+  function openLushaCompanyModal(company, result) {
+    var linkedin = result.socialLinks && result.socialLinks.linkedin;
+    var loc = result.location;
+    var locText = loc ? [loc.city, loc.state, loc.country].filter(Boolean).join(", ") : "";
+    var size = result.employeeCount;
+    var sizeText = size ? (size.exact ? size.exact + " medewerkers" : (size.min != null && size.max != null ? size.min + "–" + size.max + " medewerkers" : "")) : "";
+
+    var applyRows = [];
+    if (linkedin) applyRows.push({ label: "Company LinkedIn", value: linkedin, field: "linkedin" });
+
+    var infoLines = [];
+    if (result.industry) infoLines.push("Industrie: " + result.industry + (result.subIndustry ? " (" + result.subIndustry + ")" : ""));
+    if (sizeText) infoLines.push("Grootte: " + sizeText);
+    if (locText) infoLines.push("Locatie: " + locText);
+    if (result.phone) infoLines.push("Telefoon: " + result.phone);
+    if (result.email) infoLines.push("E-mail: " + result.email);
+    if (result.description) infoLines.push("Omschrijving: " + result.description);
+
+    var html = '';
+    html += '<div class="modal-overlay" id="overlay"><div class="modal">';
+    html += '<h2>Lusha — ' + esc(result.name || company.name) + '</h2>';
+    if (applyRows.length) {
+      html += '<div style="display:flex;flex-direction:column;gap:10px;">';
+      applyRows.forEach(function (r) { html = lushaApplyRow(html, r); });
+      html += '</div>';
+    }
+    if (infoLines.length) {
+      html += '<div><span class="field-label">Ter info (geen apart veld in Leadbeheer)</span>';
+      html += '<div style="font-size:13px;color:var(--sub);margin:6px 0 10px;">' + infoLines.map(esc).join("<br>") + '</div>';
+      html += '<button class="btn btn-quiet" id="lusha-append-notes">Toevoegen aan Bedrijfsnotities</button></div>';
+    }
+    if (!applyRows.length && !infoLines.length) {
+      html += '<div class="empty-note">Geen bruikbare gegevens gevonden voor dit bedrijf.</div>';
+    }
+    html += '<div class="modal-actions"><button class="btn btn-quiet" id="modal-cancel">Sluiten</button></div>';
+    html += '</div></div>';
+    $("#modal-root").innerHTML = html;
+    $("#overlay").addEventListener("click", function (e) { if (e.target.id === "overlay") closeModal(); });
+    $("#modal-cancel").addEventListener("click", closeModal);
+    Array.prototype.forEach.call($("#modal-root").querySelectorAll("[data-lusha-apply]"), function (btn) {
+      btn.addEventListener("click", function () {
+        var field = btn.getAttribute("data-lusha-apply");
+        var row = applyRows.find(function (r) { return r.field === field; });
+        var patch = {};
+        patch[field] = row.value;
+        supabase.from("companies").update(patch).eq("id", company.id).then(function (res) {
+          if (res.error) { console.error(res.error); toast("Toepassen mislukt"); return; }
+          toast(row.label + " toegepast");
+          btn.textContent = "Toegepast";
+          btn.disabled = true;
+        });
+      });
+    });
+    var appendBtn = $("#lusha-append-notes");
+    if (appendBtn) {
+      appendBtn.addEventListener("click", function () {
+        var summary = "Lusha (" + new Date().toISOString().slice(0, 10) + "):\n" + infoLines.join("\n");
+        var newNotes = company.notes ? company.notes + "\n\n" + summary : summary;
+        supabase.from("companies").update({ notes: newNotes }).eq("id", company.id).then(function (res) {
+          if (res.error) { console.error(res.error); toast("Toevoegen mislukt"); return; }
+          toast("Toegevoegd aan Bedrijfsnotities");
+          appendBtn.textContent = "Toegevoegd";
+          appendBtn.disabled = true;
+        });
+      });
+    }
   }
 
   // ---------- import / export ----------

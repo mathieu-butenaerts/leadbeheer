@@ -37,6 +37,8 @@ login/register flow, copied from that repo's `web/` folder.
   on every push to `main`.
 - `tools/migrate_*.py` — one-off converters for legacy Excel exports that
   don't match the app's own template columns (see below).
+- `supabase/functions/lusha-lookup/` — Edge Function that proxies Lusha API
+  calls so the Lusha key never reaches the browser (see below).
 
 ## Importing legacy Excel exports
 
@@ -87,6 +89,66 @@ Engagement Level as a smaller contribution, matched by substring so values
 like "Very Low"/"Very High" aren't missed by an exact High/Medium/Low match.
 A company with no engagement data at all shows "—", not a 0, so "never
 measured" stays visually distinct from "measured, scored zero".
+
+## Lusha lookups
+
+A magnifying-glass button on a contact card, and an "Opzoeken via Lusha"
+button in a company's detail panel, search
+[Lusha](https://www.lusha.com)'s contact/company database and show what it
+finds in a small panel — nothing is written to the database until you click
+"Toepassen" on a specific field. Contact results can fill in **E-mail**,
+**Mobiel**, **Vast**, and **Functie**; company results can fill in **Company
+LinkedIn**, and everything else Lusha returns (industry, size, location,
+phone, description, ...) shows for reference with a one-click "Toevoegen aan
+Bedrijfsnotities" to fold it into that company's notes instead.
+
+**Why this needs a one-time setup, and can't just be a button:** a Lusha API
+key is a plain secret — if it lived in `index.html`, anyone who opened the
+browser's dev tools could read it and spend your Lusha credits. Since this
+whole site is static (GitHub Pages, no server of its own), the key instead
+lives in a **Supabase Edge Function** (`supabase/functions/lusha-lookup/`) —
+a small serverless function attached to the same Supabase project you
+already use for everything else. The browser calls that function
+(authenticated with the same login already in place); the function calls
+Lusha with the key, which never leaves Supabase's servers.
+
+One-time setup (only needs doing once per Supabase project):
+
+1. **Get a Lusha API key.** In the Lusha dashboard:
+   [dashboard.lusha.com/enrich/api](https://dashboard.lusha.com/enrich/api).
+   Requires a Lusha plan with API access.
+2. **Install the Supabase CLI** (if you don't have it):
+   ```bash
+   npm install -g supabase
+   ```
+3. **Log in and link this repo to your Supabase project**, from this repo's
+   root:
+   ```bash
+   supabase login
+   supabase link --project-ref YOUR_PROJECT_REF
+   ```
+   `YOUR_PROJECT_REF` is in your Supabase project's dashboard URL:
+   `supabase.com/dashboard/project/<this-part>`.
+4. **Store the Lusha key as a secret** (never commit it, never paste it into
+   `index.html` — this command sends it straight to Supabase, not to this
+   repo):
+   ```bash
+   supabase secrets set LUSHA_API_KEY=your-lusha-api-key-here
+   ```
+5. **Deploy the function:**
+   ```bash
+   supabase functions deploy lusha-lookup
+   ```
+
+That's it — the buttons in the app call this function automatically once
+it's deployed. If a lookup fails, open Supabase's dashboard → Edge Functions
+→ `lusha-lookup` → Logs to see why (missing/invalid key, out of Lusha
+credits, no match found, ...).
+
+The function's request/response shapes (which fields to send Lusha, which
+fields come back) were checked directly against Lusha's published OpenAPI
+spec, not guessed — see the comments at the top of
+`supabase/functions/lusha-lookup/index.ts`.
 
 ## Note on the Claude Artifact version
 
