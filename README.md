@@ -49,7 +49,8 @@ already use its column names. For older exports with different headers,
 - `migrate_plaats_regio.py` — `Notities, Telefoon 1, Naam, Functie, Bedrijf, Plaats / regio, E-mail, Telefoon 2, LinkedIn`
 - `migrate_land.py` — `Comment, Telefoonnummer, Naam, Functie, Bedrijf, Land, Email, LinkedIn URL`
 - `migrate_native_format.py` — `Notities, Beller, Vervolg, Belaantekeningen, Mogelijk interessante hook, Id, First Name, Last Name, Gender, Email, Email 2, Mobile Phone, Work Phone, Company, Company LinkedIn, Job Function`
-- `migrate_linkedin_engagement.py` — a LinkedIn Company Page engagement export (`.csv`): `Company name, Company page URL, Engagement level, Organic impressions, Organic engagements, Paid impressions, Paid clicks, Paid engagements, Paid video views, Paid conversions, Paid leads, Paid qualified leads, Cost per qualified lead`. Unlike the others, this source is company-level metrics only (no contact people) — see [Engagement score](#engagement-score-from-linkedin-data) below.
+
+(The LinkedIn Company Page engagement export used to need `migrate_linkedin_engagement.py` too, but since that one gets re-uploaded often, it's now a button in the app itself — "LinkedIn-export importeren" — that takes the raw `.csv` directly. See [Engagement score](#engagement-score-from-linkedin-data) below. The script still exists in `tools/` if you'd rather convert it to the template shape and inspect it before importing.)
 
 Each reads one file (`.xlsx` or, for the LinkedIn one, `.csv`) and writes a new `.xlsx` shaped like the app's template —
 the docstring at the top of each script spells out exactly which source
@@ -70,10 +71,14 @@ writing anything.
 
 ## Engagement score (from LinkedIn data)
 
-Importing a `migrate_linkedin_engagement.py` output stores that company's raw
-LinkedIn metrics (impressions, clicks, leads, cost per qualified lead, ...).
-Re-uploading a later export for a company already in Leadbeheer only ever
-refreshes those numbers — it never touches its Fase, notes, or LinkedIn URL.
+Click **"LinkedIn-export importeren"** and pick the raw `.csv` LinkedIn gives
+you — no conversion step. It's read entirely in the browser (encoding
+fallback and all, mirroring what `tools/_common.py` does server-side for the
+Python-script path) and fed through the same grouping/dedupe/preview
+pipeline "Importeren" uses for a template file, just with LinkedIn's column
+names mapped onto the app's own ones first. Re-uploading a later export for
+a company already in Leadbeheer only ever refreshes its metrics — it never
+touches its Fase, notes, or LinkedIn URL.
 
 The app then computes a 0–100 "Score" for any company with at least one
 metric, shown as a sortable column and, expanded, alongside the raw numbers

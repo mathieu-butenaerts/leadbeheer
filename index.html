@@ -343,7 +343,9 @@
       <button class="btn btn-quiet" id="btn-template">Sjabloon downloaden</button>
       <button class="btn btn-quiet" id="btn-import" disabled title="Gegevens laden…">Importeren</button>
       <button class="btn btn-quiet" id="btn-export" disabled title="Gegevens laden…">Exporteren</button>
+      <button class="btn btn-quiet" id="btn-import-linkedin" disabled title="Gegevens laden…">LinkedIn-export importeren</button>
       <input type="file" id="import-file" accept=".xlsx,.xls" style="display:none">
+      <input type="file" id="import-linkedin-file" accept=".csv" style="display:none">
     </div>
   </div>
 
@@ -1563,6 +1565,78 @@
     reader.readAsArrayBuffer(file);
   }
 
+  // LinkedIn Company Page engagement export, straight into the app — no
+  // Python script step. Every row is company-level metrics only (no
+  // contact people), which processImportRows() already treats as a
+  // "company info only" row: remapping LinkedIn's column names to the
+  // app's own TEMPLATE_COLUMNS names is the only new logic needed here.
+  // Grouping, dedup-by-name, the preview modal, and only ever refreshing
+  // metrics (never Fase/notes/LinkedIn URL) on a company that already
+  // exists are all handled unchanged by the same pipeline the "Importeren"
+  // button uses.
+  var LINKEDIN_COLUMN_MAP = {
+    "Company name": "Company",
+    "Company page URL": "Company LinkedIn",
+    "Engagement level": "Engagement Level",
+    "Organic impressions": "Organic Impressions",
+    "Organic engagements": "Organic Engagements",
+    "Paid impressions": "Paid Impressions",
+    "Paid clicks": "Paid Clicks",
+    "Paid engagements": "Paid Engagements",
+    "Paid video views": "Paid Video Views",
+    "Paid conversions": "Paid Conversions",
+    "Paid leads": "Paid Leads",
+    "Paid qualified leads": "Paid Qualified Leads",
+    "Cost per qualified lead": "Cost Per Qualified Lead"
+  };
+
+  function decodeCsvBytes(bytes) {
+    // LinkedIn's export isn't guaranteed to be UTF-8 — try that first, fall
+    // back to windows-1252 (the common alternative for this kind of
+    // export; same fallback tools/_common.py's read_csv_source does
+    // server-side for the Python path, just via the browser's TextDecoder
+    // instead of Python's open(encoding=...)).
+    try {
+      return new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+    } catch (e) {
+      return new TextDecoder("windows-1252").decode(bytes);
+    }
+  }
+
+  function handleLinkedinImportFile(file) {
+    var reader = new FileReader();
+    reader.onerror = function () { toast("Kon bestand niet lezen"); };
+    reader.onload = function (e) {
+      var text = decodeCsvBytes(new Uint8Array(e.target.result));
+      var wb;
+      try {
+        wb = XLSX.read(text, { type: "string" });
+      } catch (err) {
+        console.error(err);
+        toast("Kon CSV-bestand niet lezen — is het een geldig .csv bestand?");
+        return;
+      }
+      var sheet = wb.Sheets[wb.SheetNames[0]];
+      var rawRows = XLSX.utils.sheet_to_json(sheet, { defval: "" });
+      if (!rawRows.length) { toast("Het bestand bevat geen rijen"); return; }
+
+      if (Object.keys(rawRows[0]).indexOf("Company name") === -1) {
+        toast('Dit lijkt geen LinkedIn engagement-export — kolom "Company name" ontbreekt');
+        return;
+      }
+
+      var rows = rawRows.map(function (row) {
+        var mapped = {};
+        Object.keys(LINKEDIN_COLUMN_MAP).forEach(function (src) {
+          if (row[src] != null) mapped[LINKEDIN_COLUMN_MAP[src]] = row[src];
+        });
+        return mapped;
+      });
+      processImportRows(rows);
+    };
+    reader.readAsArrayBuffer(file);
+  }
+
   // Groups the flat, one-row-per-contact sheet into per-company groups, and
   // flags rows that look like duplicates of what's already in the database
   // (matched by email first, else by first+last name) or of an earlier row
@@ -1800,6 +1874,12 @@
     e.target.value = ""; // allow re-selecting the same file later
     if (file) handleImportFile(file);
   });
+  $("#btn-import-linkedin").addEventListener("click", function () { $("#import-linkedin-file").click(); });
+  $("#import-linkedin-file").addEventListener("change", function (e) {
+    var file = e.target.files[0];
+    e.target.value = "";
+    if (file) handleLinkedinImportFile(file);
+  });
 
   (async function boot() {
     var profile = await window.requireUser();
@@ -1830,7 +1910,7 @@
       // earlier let Importeren run against an empty company list, so every
       // row in the sheet looked "new" and got inserted as a duplicate
       // instead of being matched to what's already there.
-      ["btn-add-company", "btn-import", "btn-export"].forEach(function (id) {
+      ["btn-add-company", "btn-import", "btn-export", "btn-import-linkedin"].forEach(function (id) {
         var el = $("#" + id);
         el.removeAttribute("disabled");
         el.removeAttribute("title");
