@@ -1792,16 +1792,35 @@
     // an import (never name/stage/notes, to avoid an engagement-only sheet
     // silently reverting hand-edited fields) — so a re-run of, say, a
     // monthly LinkedIn export just updates the numbers on companies that
-    // are already tracked here.
+    // are already tracked here. Sent as ONE bulk upsert rather than one
+    // request per company: with a few hundred already-known companies (the
+    // normal case for a repeat LinkedIn import), firing that many requests
+    // at once used to exceed the browser's own connection limit
+    // (net::ERR_INSUFFICIENT_RESOURCES) and fail completely, silently.
     var toRefresh = groups.filter(function (g) { return g.existing; })
-      .map(function (g) { return { id: g.existing.id, patch: engagementPatch(g) }; })
+      .map(function (g) { return { id: g.existing.id, name: g.existing.name, patch: engagementPatch(g) }; })
       .filter(function (r) { return Object.keys(r.patch).length > 0; });
 
     function refreshEngagement() {
-      if (!toRefresh.length) return Promise.resolve();
-      return Promise.all(toRefresh.map(function (r) {
-        return supabase.from("companies").update(r.patch).eq("id", r.id);
-      }));
+      if (!toRefresh.length) return Promise.resolve(0);
+      // `name` is included because upsert is an INSERT ... ON CONFLICT
+      // UPDATE under the hood, and companies.name has no default — Postgres
+      // checks that even for rows that end up taking the UPDATE branch.
+      var payload = toRefresh.map(function (r) { return Object.assign({ id: r.id, name: r.name }, r.patch); });
+      return supabase.from("companies").upsert(payload).then(function (res) {
+        if (res.error) throw new Error("Bijwerken van bedrijven mislukt: " + res.error.message);
+        return toRefresh.length;
+      });
+    }
+
+    function createCompanies() {
+      if (!createPayload.length) return Promise.resolve({ nameToId: {}, count: 0 });
+      return supabase.from("companies").insert(createPayload).select().then(function (res) {
+        if (res.error) throw new Error("Aanmaken van bedrijven mislukt: " + res.error.message);
+        var nameToId = {};
+        (res.data || []).forEach(function (row) { nameToId[normalizeName(row.name)] = row.id; });
+        return { nameToId: nameToId, count: (res.data || []).length };
+      });
     }
 
     function insertContacts(nameToId) {
@@ -1814,26 +1833,26 @@
           contactPayload.push(Object.assign({}, c.data, { company_id: companyId }));
         });
       });
-      if (!contactPayload.length) {
-        toast("Bedrijven geïmporteerd, geen nieuwe contactpersonen om toe te voegen");
-        closeModal();
-        return;
-      }
-      supabase.from("contacts").insert(contactPayload).then(function (res) {
-        if (res.error) { console.error(res.error); toast("Import van contactpersonen mislukt: " + res.error.message); return; }
-        toast(contactPayload.length + " contactperso" + (contactPayload.length === 1 ? "on" : "nen") + " geïmporteerd");
-        closeModal();
+      if (!contactPayload.length) return Promise.resolve(0);
+      return supabase.from("contacts").insert(contactPayload).then(function (res) {
+        if (res.error) throw new Error("Import van contactpersonen mislukt: " + res.error.message);
+        return contactPayload.length;
       });
     }
 
-    refreshEngagement().then(function () {
-      if (!createPayload.length) { insertContacts({}); return; }
-      supabase.from("companies").insert(createPayload).select().then(function (res) {
-        if (res.error) { console.error(res.error); toast("Import van bedrijven mislukt: " + res.error.message); return; }
-        var nameToId = {};
-        (res.data || []).forEach(function (row) { nameToId[normalizeName(row.name)] = row.id; });
-        insertContacts(nameToId);
+    Promise.all([refreshEngagement(), createCompanies()]).then(function (results) {
+      var refreshedCount = results[0], created = results[1];
+      return insertContacts(created.nameToId).then(function (contactsCount) {
+        var parts = [];
+        if (created.count) parts.push(created.count + " nieuw" + (created.count === 1 ? " bedrijf" : "e bedrijven"));
+        if (refreshedCount) parts.push(refreshedCount + " " + (refreshedCount === 1 ? "bedrijf" : "bedrijven") + " bijgewerkt");
+        if (contactsCount) parts.push(contactsCount + " contactperso" + (contactsCount === 1 ? "on" : "nen") + " toegevoegd");
+        toast(parts.length ? "Import voltooid: " + parts.join(", ") : "Import voltooid — geen wijzigingen nodig");
+        closeModal();
       });
+    }).catch(function (err) {
+      console.error(err);
+      toast(err.message || "Import mislukt");
     });
   }
 
