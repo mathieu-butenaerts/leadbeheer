@@ -85,15 +85,16 @@ metric, shown as a sortable column and, expanded, alongside the raw numbers
 it's built from. The score itself isn't stored anywhere — it's recalculated
 live from `engagementScore()` in `index.html` every time the page renders, so
 adjusting its weights is a one-line code change with no re-import needed. It
-currently weighs, roughly: qualified leads heaviest, then leads, then
-conversions, in that funnel order; a low cost per qualified lead as a bonus
-on top of the qualified-lead score; engagement *rate* (not raw impressions)
-on both organic and paid content — for paid, clicks/engagements/video views
-all count as an interaction, not just engagements; and LinkedIn's own
-Engagement Level as a smaller contribution, matched by substring so values
-like "Very Low"/"Very High" aren't missed by an exact High/Medium/Low match.
-A company with no engagement data at all shows "—", not a 0, so "never
-measured" stays visually distinct from "measured, scored zero".
+currently weighs, roughly: LinkedIn's own Engagement Level as the single
+heaviest factor (up to 40 points for "Very High" — matched by substring so
+values like "Very Low"/"Very High" aren't missed by an exact
+High/Medium/Low match), then qualified leads, then leads, then conversions,
+in that funnel order; a low cost per qualified lead as a bonus on top of
+the qualified-lead score; and engagement *rate* (not raw impressions) on
+both organic and paid content — for paid, clicks/engagements/video views
+all count as an interaction, not just engagements. A company with no
+engagement data at all shows "—", not a 0, so "never measured" stays
+visually distinct from "measured, scored zero".
 
 ## Lusha lookups
 

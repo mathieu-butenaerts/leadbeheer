@@ -602,12 +602,18 @@
     // an exact-match map silently scored as 0. Substring match instead, and
     // check the "very ..." variants first so they don't get caught by the
     // plain "low"/"high" check.
+    //
+    // Weighted as the single heaviest factor in the score (heavier than
+    // Qualified Leads' max of 30) — LinkedIn's own classification already
+    // folds together signals this app doesn't otherwise see, so a company
+    // it calls "Very High" should be able to dominate the score on that
+    // alone.
     var level = (c.engagement_level || "").toLowerCase();
-    if (level.indexOf("very high") !== -1) score += 25;
-    else if (level.indexOf("high") !== -1) score += 20;
-    else if (level.indexOf("medium") !== -1) score += 12;
-    else if (level.indexOf("very low") !== -1) score += 2;
-    else if (level.indexOf("low") !== -1) score += 5;
+    if (level.indexOf("very high") !== -1) score += 40;
+    else if (level.indexOf("high") !== -1) score += 30;
+    else if (level.indexOf("medium") !== -1) score += 18;
+    else if (level.indexOf("very low") !== -1) score += 3;
+    else if (level.indexOf("low") !== -1) score += 8;
 
     // Organic engagement RATE, not raw impressions.
     if (c.organic_impressions > 0) {
