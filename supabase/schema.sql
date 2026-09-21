@@ -68,6 +68,28 @@ alter table public.companies add column if not exists paid_leads integer;
 alter table public.companies add column if not exists paid_qualified_leads integer;
 alter table public.companies add column if not exists cost_per_qualified_lead numeric;
 
+-- Company-level firmographic + intent data from a "Crystal Ball" export
+-- (Name/Domain/Address_Line_0-4/.../SuperScore/.../Vendor_1-5). Text fields
+-- default to '' like the other enrichment text fields above (so a bulk
+-- upsert refresh never hits a NOT NULL violation); the score/date fields
+-- stay nullable so "never imported" reads differently from "imported, was
+-- zero/blank".
+alter table public.companies add column if not exists domain text not null default '';
+alter table public.companies add column if not exists address text not null default '';
+alter table public.companies add column if not exists company_size text not null default '';
+alter table public.companies add column if not exists annual_revenue text not null default '';
+alter table public.companies add column if not exists industry text not null default '';
+alter table public.companies add column if not exists country text not null default '';
+alter table public.companies add column if not exists solution text not null default '';
+alter table public.companies add column if not exists sub_solution text not null default '';
+alter table public.companies add column if not exists installed_technology text not null default '';
+alter table public.companies add column if not exists topics text not null default '';
+alter table public.companies add column if not exists vendors text not null default '';
+alter table public.companies add column if not exists report_date date;
+alter table public.companies add column if not exists previous_superscore numeric;
+alter table public.companies add column if not exists superscore numeric;
+alter table public.companies add column if not exists superscore_change numeric;
+
 create index if not exists idx_contacts_company on public.contacts(company_id);
 
 -- User-created labels (like mailbox tags), many-to-many with companies.

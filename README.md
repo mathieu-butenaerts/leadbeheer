@@ -96,6 +96,27 @@ all count as an interaction, not just engagements. A company with no
 engagement data at all shows "—", not a 0, so "never measured" stays
 visually distinct from "measured, scored zero".
 
+## Crystal Ball import
+
+Click **"Crystal Ball-export importeren"** and pick the export (`.xlsx` or
+`.csv` — both work, this button and "LinkedIn-export importeren" both try a
+binary spreadsheet first and only fall back to text/CSV parsing). Same
+pipeline as the LinkedIn import: matched to an existing company by name,
+company-only rows (no contact people in this source at all), only ever
+refreshes that company's fields from this source — never its Fase, notes,
+or LinkedIn URL.
+
+The five `Address_Line_0..4` / `InstalledTechnology_1..5` / `Topic_1..5` /
+`Vendor_1..5` columns each fold into one joined field (Address / Installed
+Technology / Topics / Vendors) — the app has one text field per concept,
+not five. `SuperScore` (with `PreviousSuperScore` and the % change,
+color-coded up/down) and the rest show in the company detail view under
+"Crystal Ball"; unlike the LinkedIn metrics, SuperScore is a ready-made
+score from the vendor, not something this app computes, so it isn't folded
+into `engagementScore()` or the sortable "Score" column. If a company also
+has a `domain` from this import, the Lusha company lookup (below) uses it
+alongside the name for a tighter match.
+
 ## Lusha lookups
 
 A magnifying-glass button on a contact card, and an "Opzoeken via Lusha"

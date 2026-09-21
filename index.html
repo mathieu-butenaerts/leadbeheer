@@ -344,8 +344,10 @@
       <button class="btn btn-quiet" id="btn-import" disabled title="Gegevens laden…">Importeren</button>
       <button class="btn btn-quiet" id="btn-export" disabled title="Gegevens laden…">Exporteren</button>
       <button class="btn btn-quiet" id="btn-import-linkedin" disabled title="Gegevens laden…">LinkedIn-export importeren</button>
+      <button class="btn btn-quiet" id="btn-import-crystalball" disabled title="Gegevens laden…">Crystal Ball-export importeren</button>
       <input type="file" id="import-file" accept=".xlsx,.xls" style="display:none">
       <input type="file" id="import-linkedin-file" accept=".csv" style="display:none">
+      <input type="file" id="import-crystalball-file" accept=".xlsx,.xls,.csv" style="display:none">
     </div>
   </div>
 
@@ -418,25 +420,49 @@
   }
   function tagById(id) { return state.tags.find(function (t) { return t.id === id; }); }
 
-  // Company-level LinkedIn Page engagement metrics (from a LinkedIn export,
-  // via tools/migrate_linkedin_engagement.py) — [template column, db column].
-  // Blank/null on any company this data hasn't been imported for.
+  // Company-level bulk-enrichment fields — [template column, db column,
+  // value type]. Type drives how processImportRows() parses a raw cell
+  // ("text" | "number" | "date", default "text"). Blank/null on any
+  // company a given source has never been imported for.
   var ENGAGEMENT_FIELDS = [
-    ["Engagement Level", "engagement_level"],
-    ["Organic Impressions", "organic_impressions"],
-    ["Organic Engagements", "organic_engagements"],
-    ["Paid Impressions", "paid_impressions"],
-    ["Paid Clicks", "paid_clicks"],
-    ["Paid Engagements", "paid_engagements"],
-    ["Paid Video Views", "paid_video_views"],
-    ["Paid Conversions", "paid_conversions"],
-    ["Paid Leads", "paid_leads"],
-    ["Paid Qualified Leads", "paid_qualified_leads"],
-    ["Cost Per Qualified Lead", "cost_per_qualified_lead"]
+    ["Engagement Level", "engagement_level", "text"],
+    ["Organic Impressions", "organic_impressions", "number"],
+    ["Organic Engagements", "organic_engagements", "number"],
+    ["Paid Impressions", "paid_impressions", "number"],
+    ["Paid Clicks", "paid_clicks", "number"],
+    ["Paid Engagements", "paid_engagements", "number"],
+    ["Paid Video Views", "paid_video_views", "number"],
+    ["Paid Conversions", "paid_conversions", "number"],
+    ["Paid Leads", "paid_leads", "number"],
+    ["Paid Qualified Leads", "paid_qualified_leads", "number"],
+    ["Cost Per Qualified Lead", "cost_per_qualified_lead", "number"]
   ];
 
+  // Company-level firmographic + intent data from a "Crystal Ball" export
+  // (Name/Domain/Address_Line_0-4/.../SuperScore/.../Vendor_1-5 — see
+  // handleCrystalBallImportFile for how those raw columns map onto these).
+  var CRYSTALBALL_FIELDS = [
+    ["Domain", "domain", "text"],
+    ["Address", "address", "text"],
+    ["Company Size", "company_size", "text"],
+    ["Annual Revenue", "annual_revenue", "text"],
+    ["Industry", "industry", "text"],
+    ["Country", "country", "text"],
+    ["Solution", "solution", "text"],
+    ["Report Date", "report_date", "date"],
+    ["Previous SuperScore", "previous_superscore", "number"],
+    ["SuperScore", "superscore", "number"],
+    ["SuperScore % Change", "superscore_change", "number"],
+    ["Sub-solution", "sub_solution", "text"],
+    ["Installed Technology", "installed_technology", "text"],
+    ["Topics", "topics", "text"],
+    ["Vendors", "vendors", "text"]
+  ];
+
+  var ENRICHMENT_FIELDS = ENGAGEMENT_FIELDS.concat(CRYSTALBALL_FIELDS);
+
   var TEMPLATE_COLUMNS = ["Company", "Company LinkedIn", "Fase", "Bedrijfsnotities"]
-    .concat(ENGAGEMENT_FIELDS.map(function (f) { return f[0]; }))
+    .concat(ENRICHMENT_FIELDS.map(function (f) { return f[0]; }))
     .concat([
       "First Name", "Last Name", "Job Title", "Gender",
       "Email", "Email 2", "Mobile Phone", "Work Phone",
@@ -923,6 +949,34 @@
       html += '    </div>';
       html += '  </div>';
     }
+    if (CRYSTALBALL_FIELDS.some(function (f) { return c[f[1]] != null; })) {
+      html += '  <div class="meta-block">';
+      html += '    <span class="field-label">Crystal Ball';
+      if (c.superscore != null) {
+        html += ' <span class="score tnum" style="margin-left:6px">' + esc(String(c.superscore)) + '</span>';
+        if (c.previous_superscore != null) html += ' <span style="font-size:11px;color:var(--dim);text-transform:none;">was ' + esc(String(c.previous_superscore)) + '</span>';
+        if (c.superscore_change != null) {
+          var changeColor = c.superscore_change > 0 ? "var(--stage-gewonnen)" : (c.superscore_change < 0 ? "var(--magenta)" : "var(--dim)");
+          html += ' <span class="tnum" style="font-size:11px;margin-left:2px;color:' + changeColor + ';text-transform:none;">(' + (c.superscore_change > 0 ? "+" : "") + esc(String(c.superscore_change)) + '%)</span>';
+        }
+      }
+      html += '</span>';
+      html += '    <div class="engagement-grid">';
+      html += fieldBlock("Domain", c.domain);
+      html += fieldBlock("Grootte", c.company_size);
+      html += fieldBlock("Omzet", c.annual_revenue);
+      html += fieldBlock("Industrie", c.industry);
+      html += fieldBlock("Land", c.country);
+      html += fieldBlock("Adres", c.address);
+      html += fieldBlock("Solution", c.solution);
+      html += fieldBlock("Sub-solution", c.sub_solution);
+      html += fieldBlock("Technologie", c.installed_technology);
+      html += fieldBlock("Topics", c.topics);
+      html += fieldBlock("Vendors", c.vendors);
+      html += fieldBlock("Rapportdatum", c.report_date ? formatDate(c.report_date) : "");
+      html += '    </div>';
+      html += '  </div>';
+    }
     html += '</div>';
 
     html += '<div class="contacts-col">';
@@ -1346,8 +1400,13 @@
 
   function lushaLookupCompany(company) {
     toast("Bezig met opzoeken via Lusha…");
+    // domain (from a Crystal Ball import, if this company has one) narrows
+    // the match better than name alone — Lusha's V3CompanySearchItem
+    // accepts it as a separate identifier alongside name.
+    var query = { name: company.name };
+    if (company.domain) query.domain = company.domain;
     supabase.functions.invoke("lusha-lookup", {
-      body: { type: "company", query: { name: company.name } }
+      body: { type: "company", query: query }
     }).then(function (res) {
       if (res.error) { console.error(res.error); toast("Lusha-opzoeking mislukt"); return; }
       var result = ((res.data || {}).results || [])[0];
@@ -1531,7 +1590,7 @@
     state.companies.forEach(function (c) {
       var contacts = state.contactsByCompany[c.id] || [];
       var base = { "Company": c.name, "Company LinkedIn": c.linkedin, "Fase": stageInfo(c.stage).label, "Bedrijfsnotities": c.notes };
-      ENGAGEMENT_FIELDS.forEach(function (f) { base[f[0]] = c[f[1]] != null ? c[f[1]] : ""; });
+      ENRICHMENT_FIELDS.forEach(function (f) { base[f[0]] = c[f[1]] != null ? c[f[1]] : ""; });
       if (!contacts.length) {
         rows.push(rowToArray(base));
         return;
@@ -1609,28 +1668,43 @@
     }
   }
 
-  function handleLinkedinImportFile(file) {
+  // Shared reader for both bulk-enrichment import buttons: tries the
+  // binary spreadsheet formats first (.xlsx/.xls — no text-encoding
+  // ambiguity, OOXML strings are always UTF-8 internally), and only falls
+  // back to decoding-as-text (with the UTF-8 -> windows-1252 fallback) for
+  // a plain .csv. Means either button accepts whichever shape someone
+  // actually exported, not just the one named on the label.
+  function readTabularFile(file, onRows) {
     var reader = new FileReader();
     reader.onerror = function () { toast("Kon bestand niet lezen"); };
     reader.onload = function (e) {
-      var text = decodeCsvBytes(new Uint8Array(e.target.result));
+      var bytes = new Uint8Array(e.target.result);
       var wb;
       try {
-        wb = XLSX.read(text, { type: "string" });
-      } catch (err) {
-        console.error(err);
-        toast("Kon CSV-bestand niet lezen — is het een geldig .csv bestand?");
-        return;
+        wb = XLSX.read(bytes, { type: "array", cellDates: true });
+      } catch (binErr) {
+        try {
+          wb = XLSX.read(decodeCsvBytes(bytes), { type: "string" });
+        } catch (csvErr) {
+          console.error(csvErr);
+          toast("Kon bestand niet lezen — is het een geldig .xlsx/.xls/.csv bestand?");
+          return;
+        }
       }
       var sheet = wb.Sheets[wb.SheetNames[0]];
-      var rawRows = XLSX.utils.sheet_to_json(sheet, { defval: "" });
-      if (!rawRows.length) { toast("Het bestand bevat geen rijen"); return; }
+      var rows = XLSX.utils.sheet_to_json(sheet, { defval: "" });
+      if (!rows.length) { toast("Het bestand bevat geen rijen"); return; }
+      onRows(rows);
+    };
+    reader.readAsArrayBuffer(file);
+  }
 
+  function handleLinkedinImportFile(file) {
+    readTabularFile(file, function (rawRows) {
       if (Object.keys(rawRows[0]).indexOf("Company name") === -1) {
         toast('Dit lijkt geen LinkedIn engagement-export — kolom "Company name" ontbreekt');
         return;
       }
-
       var rows = rawRows.map(function (row) {
         var mapped = {};
         Object.keys(LINKEDIN_COLUMN_MAP).forEach(function (src) {
@@ -1639,8 +1713,51 @@
         return mapped;
       });
       processImportRows(rows);
+    });
+  }
+
+  // Crystal Ball export: firmographics + intent data, again company-level
+  // only (no contact people), so this feeds the exact same
+  // processImportRows()/runImport() pipeline the other two import buttons
+  // use — only the column mapping is specific to this source. The
+  // Address_Line_*/InstalledTechnology_*/Topic_*/Vendor_* groups of up to
+  // 5 columns each get folded into one joined field apiece, since the app
+  // has one text field per concept, not five.
+  function joinNonEmpty(values) {
+    return values.filter(function (v) { return v != null && String(v).trim() !== ""; }).join(", ");
+  }
+
+  function remapCrystalBallRow(row) {
+    var mapped = {
+      "Company": row["Name"],
+      "Domain": row["Domain"],
+      "Address": joinNonEmpty([row["Address_Line_0"], row["Address_Line_1"], row["Address_Line_2"], row["Address_Line_3"], row["Address_Line_4"]]),
+      "Company Size": row["Company_Size"],
+      "Annual Revenue": row["Annual_Sales_Range_USD"],
+      "Industry": row["Industry"],
+      "Country": row["Country"],
+      "Solution": row["Solution"],
+      "Report Date": row["ReportDate"],
+      "Previous SuperScore": row["PreviousSuperScore"],
+      "SuperScore": row["SuperScore"],
+      "SuperScore % Change": row["SuperScorePercentChange"],
+      "Sub-solution": row["Source_Sub_Solution"],
+      "Installed Technology": joinNonEmpty([row["InstalledTechnology_1"], row["InstalledTechnology_2"], row["InstalledTechnology_3"], row["InstalledTechnology_4"], row["InstalledTechnology_5"]]),
+      "Topics": joinNonEmpty([row["Topic_1"], row["Topic_2"], row["Topic_3"], row["Topic_4"], row["Topic_5"]]),
+      "Vendors": joinNonEmpty([row["Vendor_1"], row["Vendor_2"], row["Vendor_3"], row["Vendor_4"], row["Vendor_5"]])
     };
-    reader.readAsArrayBuffer(file);
+    Object.keys(mapped).forEach(function (k) { if (mapped[k] == null || mapped[k] === "") delete mapped[k]; });
+    return mapped;
+  }
+
+  function handleCrystalBallImportFile(file) {
+    readTabularFile(file, function (rawRows) {
+      if (Object.keys(rawRows[0]).indexOf("Name") === -1) {
+        toast('Dit lijkt geen Crystal Ball-export — kolom "Name" ontbreekt');
+        return;
+      }
+      processImportRows(rawRows.map(remapCrystalBallRow));
+    });
   }
 
   // Groups the flat, one-row-per-contact sheet into per-company groups, and
@@ -1691,10 +1808,10 @@
       if (!g.linkedin) g.linkedin = val(row, "Company LinkedIn");
       if (!g.stage) g.stage = stageKeyFromLabel(val(row, "Fase"));
       if (!g.notes) g.notes = val(row, "Bedrijfsnotities");
-      ENGAGEMENT_FIELDS.forEach(function (f) {
-        var col = f[0], dbKey = f[1];
+      ENRICHMENT_FIELDS.forEach(function (f) {
+        var col = f[0], dbKey = f[1], type = f[2];
         if (g[dbKey] != null) return; // first row with an actual value for this field wins
-        var v = dbKey === "engagement_level" ? (val(row, col) || null) : numVal(row, col);
+        var v = type === "number" ? numVal(row, col) : (type === "date" ? parseDateCell(row[col]) : (val(row, col) || null));
         if (v != null) g[dbKey] = v;
       });
 
@@ -1782,29 +1899,30 @@
     $("#modal-save").addEventListener("click", function () { runImport(groups); });
   }
 
-  function engagementPatch(g) {
+  function enrichmentPatch(g) {
     var patch = {};
-    ENGAGEMENT_FIELDS.forEach(function (f) { if (g[f[1]] != null) patch[f[1]] = g[f[1]]; });
+    ENRICHMENT_FIELDS.forEach(function (f) { if (g[f[1]] != null) patch[f[1]] = g[f[1]]; });
     return patch;
   }
 
   function runImport(groups) {
     var toCreate = groups.filter(function (g) { return !g.existing; });
     var createPayload = toCreate.map(function (g) {
-      return Object.assign({ name: g.name, linkedin: g.linkedin, stage: g.stage || "nieuw", notes: g.notes }, engagementPatch(g));
+      return Object.assign({ name: g.name, linkedin: g.linkedin, stage: g.stage || "nieuw", notes: g.notes }, enrichmentPatch(g));
     });
 
-    // Existing companies only ever get their engagement metrics refreshed by
-    // an import (never name/stage/notes, to avoid an engagement-only sheet
-    // silently reverting hand-edited fields) — so a re-run of, say, a
-    // monthly LinkedIn export just updates the numbers on companies that
-    // are already tracked here. Sent as ONE bulk upsert rather than one
-    // request per company: with a few hundred already-known companies (the
-    // normal case for a repeat LinkedIn import), firing that many requests
-    // at once used to exceed the browser's own connection limit
+    // Existing companies only ever get their enrichment fields (LinkedIn
+    // engagement metrics, Crystal Ball firmographics/intent data, ...)
+    // refreshed by an import — never name/stage/notes, to avoid a
+    // metrics-only sheet silently reverting hand-edited fields — so
+    // re-running, say, a monthly LinkedIn export just updates the numbers
+    // on companies that are already tracked here. Sent as ONE bulk upsert
+    // rather than one request per company: with a few hundred already-known
+    // companies (the normal case for a repeat import), firing that many
+    // requests at once used to exceed the browser's own connection limit
     // (net::ERR_INSUFFICIENT_RESOURCES) and fail completely, silently.
     var toRefresh = groups.filter(function (g) { return g.existing; })
-      .map(function (g) { return { id: g.existing.id, name: g.existing.name, patch: engagementPatch(g) }; })
+      .map(function (g) { return { id: g.existing.id, name: g.existing.name, patch: enrichmentPatch(g) }; })
       .filter(function (r) { return Object.keys(r.patch).length > 0; });
 
     function refreshEngagement() {
@@ -1905,6 +2023,12 @@
     e.target.value = "";
     if (file) handleLinkedinImportFile(file);
   });
+  $("#btn-import-crystalball").addEventListener("click", function () { $("#import-crystalball-file").click(); });
+  $("#import-crystalball-file").addEventListener("change", function (e) {
+    var file = e.target.files[0];
+    e.target.value = "";
+    if (file) handleCrystalBallImportFile(file);
+  });
 
   (async function boot() {
     var profile = await window.requireUser();
@@ -1935,7 +2059,7 @@
       // earlier let Importeren run against an empty company list, so every
       // row in the sheet looked "new" and got inserted as a duplicate
       // instead of being matched to what's already there.
-      ["btn-add-company", "btn-import", "btn-export", "btn-import-linkedin"].forEach(function (id) {
+      ["btn-add-company", "btn-import", "btn-export", "btn-import-linkedin", "btn-import-crystalball"].forEach(function (id) {
         var el = $("#" + id);
         el.removeAttribute("disabled");
         el.removeAttribute("title");
