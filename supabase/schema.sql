@@ -111,6 +111,21 @@ create table if not exists public.company_tags (
 );
 create index if not exists idx_company_tags_tag on public.company_tags(tag_id);
 
+-- One row per (company, report date) SuperScore reading from a Crystal
+-- Ball import, so the trend can be charted over time instead of only ever
+-- showing the current vs. previous value companies.superscore/
+-- previous_superscore hold. Primary key on (company_id, report_date) means
+-- re-importing the same report date just updates that one point rather
+-- than duplicating it.
+create table if not exists public.company_superscore_history (
+  company_id uuid not null references public.companies(id) on delete cascade,
+  report_date date not null,
+  superscore numeric not null,
+  created_at timestamptz not null default now(),
+  primary key (company_id, report_date)
+);
+create index if not exists idx_superscore_history_company on public.company_superscore_history(company_id);
+
 -- Keep companies.contact_count in sync automatically, so the browser never
 -- has to read-modify-write it (that would race when two people edit at once).
 create or replace function public.leads_sync_contact_count() returns trigger
@@ -178,6 +193,16 @@ drop policy if exists "authenticated write company_tags" on public.company_tags;
 create policy "authenticated write company_tags" on public.company_tags
   for all to authenticated using (true) with check (true);
 
+alter table public.company_superscore_history enable row level security;
+
+drop policy if exists "authenticated read superscore history" on public.company_superscore_history;
+create policy "authenticated read superscore history" on public.company_superscore_history
+  for select to authenticated using (true);
+
+drop policy if exists "authenticated write superscore history" on public.company_superscore_history;
+create policy "authenticated write superscore history" on public.company_superscore_history
+  for all to authenticated using (true) with check (true);
+
 -- Live updates in the browser (company/contact/tag changes push to every
 -- open tab). Wrapped so re-running this script (or a table already being a
 -- member) can't error out and roll back everything else above.
@@ -197,6 +222,10 @@ begin
   end;
   begin
     execute 'alter publication supabase_realtime add table public.company_tags';
+  exception when duplicate_object then null;
+  end;
+  begin
+    execute 'alter publication supabase_realtime add table public.company_superscore_history';
   exception when duplicate_object then null;
   end;
 end $$;

@@ -393,6 +393,7 @@
     contactsByCompany: {},
     tags: [],
     companyTagIds: {},
+    superscoreHistory: {}, // companyId -> [{report_date, superscore}, ...], fetched lazily on expand
     expandedCompanyId: null,
     search: "",
     stageFilter: "all",
@@ -871,6 +872,40 @@
     }
     root.innerHTML = list.map(renderCompanyRows).join("");
     attachHandlers(root);
+    renderSuperscoreChart(root);
+  }
+
+  // At most one company is ever expanded at a time, so at most one of
+  // these canvases exists per render — no need to loop. A fresh canvas
+  // node comes with every re-render (the whole tbody's innerHTML was just
+  // replaced above), so unlike the persistent #stageChart there's nothing
+  // to update-in-place or explicitly destroy first.
+  function renderSuperscoreChart(root) {
+    var canvas = root.querySelector("[data-superscore-canvas]");
+    if (!canvas || typeof Chart === "undefined") return;
+    var history = state.superscoreHistory[canvas.getAttribute("data-superscore-canvas")] || [];
+    var style = getComputedStyle(document.documentElement);
+    var blauw = style.getPropertyValue("--blauw").trim();
+    var dim = style.getPropertyValue("--dim").trim();
+    new Chart(canvas.getContext("2d"), {
+      type: "line",
+      data: {
+        labels: history.map(function (h) { return formatDate(h.report_date); }),
+        datasets: [{
+          data: history.map(function (h) { return h.superscore; }),
+          borderColor: blauw, backgroundColor: "rgba(25,157,217,0.14)",
+          fill: true, tension: 0.25, pointRadius: 3, pointBackgroundColor: blauw
+        }]
+      },
+      options: {
+        maintainAspectRatio: false,
+        plugins: { legend: { display: false } },
+        scales: {
+          x: { ticks: { color: dim, font: { size: 10 } }, grid: { display: false } },
+          y: { ticks: { color: dim, font: { size: 10 } }, grid: { color: "rgba(255,255,255,0.06)" } }
+        }
+      }
+    });
   }
 
   function renderCompanyRows(c) {
@@ -975,6 +1010,11 @@
       html += fieldBlock("Vendors", c.vendors);
       html += fieldBlock("Rapportdatum", c.report_date ? formatDate(c.report_date) : "");
       html += '    </div>';
+      var history = state.superscoreHistory[c.id] || [];
+      if (history.length >= 2) {
+        html += '    <span class="field-label" style="margin-top:12px;">SuperScore-verloop</span>';
+        html += '    <div class="chart-wrap" style="height:130px;"><canvas data-superscore-canvas="' + c.id + '"></canvas></div>';
+      }
       html += '  </div>';
     }
     html += '</div>';
@@ -1152,6 +1192,22 @@
   function toggleCompany(id) {
     state.expandedCompanyId = (state.expandedCompanyId === id) ? null : id;
     render();
+    if (state.expandedCompanyId && !state.superscoreHistory[state.expandedCompanyId]) {
+      loadSuperscoreHistory(state.expandedCompanyId);
+    }
+  }
+
+  // Fetched on demand per company (not preloaded at boot like contacts/tags)
+  // — this is drill-down data only the currently-expanded company's detail
+  // view needs, and unlike contacts it has no bearing on filtering, so
+  // there's no reason to load every company's history up front.
+  function loadSuperscoreHistory(companyId) {
+    supabase.from("company_superscore_history").select("report_date, superscore")
+      .eq("company_id", companyId).order("report_date").then(function (res) {
+        if (res.error) { console.error(res.error); return; }
+        state.superscoreHistory[companyId] = res.data || [];
+        if (state.expandedCompanyId === companyId) render();
+      });
   }
 
   // All contacts are loaded once at boot (see boot() below) and kept live via
@@ -1964,9 +2020,32 @@
       });
     }
 
+    // A Crystal Ball import row carries both a SuperScore and the
+    // ReportDate it applies to — record one history point per company
+    // per date so the trend can be charted, instead of only ever
+    // knowing the current vs. previous value (which is all
+    // companies.superscore/previous_superscore hold). Rows from any other
+    // import source just won't have both fields set, so this is naturally
+    // a no-op for those — no source-specific branching needed. One bulk
+    // upsert, same reasoning as refreshEngagement() above.
+    function recordSuperscoreHistory(nameToId) {
+      var rows = [];
+      groups.forEach(function (g) {
+        if (g.superscore == null || g.report_date == null) return;
+        var companyId = g.existing ? g.existing.id : nameToId[normalizeName(g.name)];
+        if (!companyId) return;
+        rows.push({ company_id: companyId, report_date: g.report_date, superscore: g.superscore });
+      });
+      if (!rows.length) return Promise.resolve();
+      return supabase.from("company_superscore_history").upsert(rows).then(function (res) {
+        if (res.error) console.error("Kon SuperScore-historie niet opslaan:", res.error); // non-fatal
+      });
+    }
+
     Promise.all([refreshEngagement(), createCompanies()]).then(function (results) {
       var refreshedCount = results[0], created = results[1];
-      return insertContacts(created.nameToId).then(function (contactsCount) {
+      return Promise.all([insertContacts(created.nameToId), recordSuperscoreHistory(created.nameToId)]).then(function (r) {
+        var contactsCount = r[0];
         var parts = [];
         if (created.count) parts.push(created.count + " nieuw" + (created.count === 1 ? " bedrijf" : "e bedrijven"));
         if (refreshedCount) parts.push(refreshedCount + " " + (refreshedCount === 1 ? "bedrijf" : "bedrijven") + " bijgewerkt");

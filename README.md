@@ -117,6 +117,17 @@ into `engagementScore()` or the sortable "Score" column. If a company also
 has a `domain` from this import, the Lusha company lookup (below) uses it
 alongside the name for a tighter match.
 
+**SuperScore over time.** Each import records a point (company, ReportDate,
+SuperScore) in `company_superscore_history` — a separate table, so
+re-importing the same ReportDate just updates that one point rather than
+piling up duplicates, and the current `companies.superscore` /
+`previous_superscore` columns stay a fast-to-read single snapshot rather
+than something to aggregate. Once a company has 2+ recorded points, a line
+chart appears under "Crystal Ball" in its detail view. That history isn't
+preloaded for every company up front (unlike contacts/tags) — it's fetched
+only for whichever company you expand, since it's drill-down detail, not
+something the list view or filters need.
+
 ## Lusha lookups
 
 A magnifying-glass button on a contact card, and an "Opzoeken via Lusha"
