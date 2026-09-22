@@ -2033,9 +2033,28 @@
     $("#modal-save").addEventListener("click", function () { runImport(groups); });
   }
 
+  // For an EXISTING company (g.existing set), every field always gets a
+  // value here — the new one if this import provides it, else the
+  // company's current value — rather than omitting fields with nothing
+  // new. That matters once patches from several companies land in the
+  // same bulk upsert batch (see bulkSequential below): Postgres needs one
+  // consistent column list for the whole batch, so a row that simply
+  // omitted, say, "topics" because THIS company's row didn't clear or
+  // duplicate that key — expecting "leave it alone" — instead got it set
+  // to NULL, because other rows in the same batch DID provide topics.
+  // Silent data loss for nullable columns, a NOT NULL violation (crashing
+  // the whole batch) for text ones like topics/vendors/domain/etc. A new
+  // company (no g.existing) has nothing to preserve, so it keeps the
+  // simpler omit-if-absent behavior — Postgres just applies each column's
+  // default for a plain INSERT, without the same "compared to what?" issue
+  // an UPDATE-via-upsert has.
   function enrichmentPatch(g) {
     var patch = {};
-    ENRICHMENT_FIELDS.forEach(function (f) { if (g[f[1]] != null) patch[f[1]] = g[f[1]]; });
+    ENRICHMENT_FIELDS.forEach(function (f) {
+      var dbKey = f[1];
+      if (g[dbKey] != null) { patch[dbKey] = g[dbKey]; return; }
+      if (g.existing && g.existing[dbKey] != null) patch[dbKey] = g.existing[dbKey];
+    });
     return patch;
   }
 
