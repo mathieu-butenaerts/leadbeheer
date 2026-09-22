@@ -2051,9 +2051,21 @@
   function enrichmentPatch(g) {
     var patch = {};
     ENRICHMENT_FIELDS.forEach(function (f) {
-      var dbKey = f[1];
+      var dbKey = f[1], type = f[2];
       if (g[dbKey] != null) { patch[dbKey] = g[dbKey]; return; }
-      if (g.existing && g.existing[dbKey] != null) patch[dbKey] = g.existing[dbKey];
+      if (g.existing && g.existing[dbKey] != null) { patch[dbKey] = g.existing[dbKey]; return; }
+      // Text columns are NOT NULL (default '') — always send a value, new
+      // company or existing, so this column can never be absent from one
+      // row's key set while present in another's within the same bulk
+      // write. That mismatch is what caused the topics/vendors crashes:
+      // an INSERT or an UPSERT batching several companies' rows together
+      // needs one consistent column list for the whole statement, and a
+      // row that just omits a NOT NULL column — expecting "use the
+      // default" or "leave it alone" — gets NULL instead once any other
+      // row in the same batch does provide that column. Number/date
+      // fields are nullable, so they're left omitted as before; there's
+      // no equivalent safe default to fall back to for those.
+      if (type === "text") patch[dbKey] = "";
     });
     return patch;
   }
