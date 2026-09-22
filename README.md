@@ -100,11 +100,28 @@ visually distinct from "measured, scored zero".
 
 Click **"Crystal Ball-export importeren"** and pick the export (`.xlsx` or
 `.csv` — both work, this button and "LinkedIn-export importeren" both try a
-binary spreadsheet first and only fall back to text/CSV parsing). Same
-pipeline as the LinkedIn import: matched to an existing company by name,
-company-only rows (no contact people in this source at all), only ever
-refreshes that company's fields from this source — never its Fase, notes,
-or LinkedIn URL.
+binary spreadsheet first and only fall back to text/CSV parsing).
+
+**A full "Segmentation Export" scores every company against ~10 different
+Solution categories, in every country Crystal Ball covers — one row each,
+which can add up to 150,000+ rows in one file.** Before anything else
+happens, a filter screen lets you narrow that down to one Solution and a
+set of countries (defaults to "Finance and Spend Management" / Netherlands
++ Belgium if those are present, and shows a live "X rows, Y unique
+companies" count as you adjust it) — leave a field at "all" to skip
+filtering it. Picking exactly one Solution matters beyond just cutting
+volume: with all ~10 solution-rows per company left in, the app would have
+to arbitrarily keep one company's SuperScore and silently drop the other
+9, since a company only has one `superscore` field, not one per Solution.
+
+Once filtered, it's the same pipeline as the LinkedIn import: matched to an
+existing company by name, company-only rows (no contact people in this
+source at all), only ever refreshes that company's fields from this source
+— never its Fase, notes, or LinkedIn URL. All the writes to Supabase (new
+companies, refreshed companies, SuperScore history points) go out in
+sequential batches of 500 rather than all at once or one row per request,
+so even an unfiltered, five-figure-row import can't overwhelm a single
+request the way earlier ones did.
 
 The five `Address_Line_0..4` / `InstalledTechnology_1..5` / `Topic_1..5` /
 `Vendor_1..5` columns each fold into one joined field (Address / Installed

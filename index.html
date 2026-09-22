@@ -1812,7 +1812,85 @@
         toast('Dit lijkt geen Crystal Ball-export — kolom "Name" ontbreekt');
         return;
       }
-      processImportRows(rawRows.map(remapCrystalBallRow));
+      openCrystalBallFilterModal(rawRows);
+    });
+  }
+
+  function distinctValues(rows, col) {
+    var seen = {}, out = [];
+    rows.forEach(function (r) {
+      var v = r[col];
+      if (v != null && v !== "" && !seen[v]) { seen[v] = true; out.push(v); }
+    });
+    out.sort();
+    return out;
+  }
+
+  // A full Crystal Ball export scores every company against ~10 different
+  // Solution categories (one row each) across every country it covers —
+  // a "Segmentation Export" can run to 150,000+ rows. Rather than import
+  // all of it (most of which is irrelevant, and large enough on its own to
+  // hit request-size/timeout limits), filter down to the Solution(s) and
+  // countries that actually matter *before* anything else runs. Filtering
+  // to exactly one Solution also sidesteps a real ambiguity: with all 10
+  // solution-rows per company, "first row wins" would keep an arbitrary
+  // one and silently discard the other 9 SuperScores.
+  function openCrystalBallFilterModal(rawRows) {
+    var solutions = distinctValues(rawRows, "Solution");
+    var countries = distinctValues(rawRows, "Country");
+    var defaultSolution = solutions.indexOf("Finance and Spend Management") !== -1 ? "Finance and Spend Management" : "";
+    var defaultCountries = { "Netherlands": true, "Belgium": true };
+
+    var html = '';
+    html += '<div class="modal-overlay" id="overlay"><div class="modal">';
+    html += '<h2>Crystal Ball-import filteren</h2>';
+    html += '<div class="form-grid">';
+    html += '  <div class="form-field full"><label>Solution</label><select id="cb-solution">';
+    html += '    <option value="">Alle solutions</option>';
+    solutions.forEach(function (s) {
+      html += '<option value="' + esc(s) + '"' + (s === defaultSolution ? " selected" : "") + '>' + esc(s) + '</option>';
+    });
+    html += '  </select></div>';
+    html += '  <div class="form-field full"><label>Landen (niets aangevinkt = alle landen)</label>';
+    html += '    <div style="display:flex;flex-wrap:wrap;gap:10px;margin-top:4px;">';
+    countries.forEach(function (c) {
+      html += '<label style="display:flex;align-items:center;gap:5px;font-size:13px;font-weight:400;color:var(--sub);">' +
+        '<input type="checkbox" class="cb-country" value="' + esc(c) + '"' + (defaultCountries[c] ? " checked" : "") + '> ' + esc(c) + '</label>';
+    });
+    html += '    </div>';
+    html += '  </div>';
+    html += '</div>';
+    html += '<div class="save-hint" id="cb-match-count"></div>';
+    html += '<div class="modal-actions"><button class="btn btn-quiet" id="modal-cancel">Annuleren</button><button class="btn" id="modal-save">Doorgaan</button></div>';
+    html += '</div></div>';
+    $("#modal-root").innerHTML = html;
+
+    function filteredRows() {
+      var solution = $("#cb-solution").value;
+      var checkedCountries = Array.prototype.filter.call(document.querySelectorAll(".cb-country"), function (el) { return el.checked; })
+        .map(function (el) { return el.value; });
+      return rawRows.filter(function (r) {
+        if (solution && r["Solution"] !== solution) return false;
+        if (checkedCountries.length && checkedCountries.indexOf(r["Country"]) === -1) return false;
+        return true;
+      });
+    }
+    function updateCount() {
+      var rows = filteredRows();
+      var names = {};
+      rows.forEach(function (r) { if (r["Name"]) names[String(r["Name"]).trim().toLowerCase()] = true; });
+      $("#cb-match-count").textContent = rows.length + " rijen, " + Object.keys(names).length + " unieke bedrijven na filter (van " + rawRows.length + " rijen totaal)";
+    }
+    updateCount();
+    $("#cb-solution").addEventListener("change", updateCount);
+    Array.prototype.forEach.call(document.querySelectorAll(".cb-country"), function (el) { el.addEventListener("change", updateCount); });
+
+    $("#overlay").addEventListener("click", function (e) { if (e.target.id === "overlay") closeModal(); });
+    $("#modal-cancel").addEventListener("click", closeModal);
+    $("#modal-save").addEventListener("click", function () {
+      var rows = filteredRows();
+      if (!rows.length) { toast("Geen rijen na filtering"); return; }
+      processImportRows(rows.map(remapCrystalBallRow));
     });
   }
 
@@ -1961,6 +2039,28 @@
     return patch;
   }
 
+  function chunk(arr, size) {
+    var out = [];
+    for (var i = 0; i < arr.length; i += size) out.push(arr.slice(i, i + size));
+    return out;
+  }
+
+  // Runs fn(batch) once per chunk of `rows`, one at a time (never
+  // concurrently — firing one request per row at once is exactly what
+  // caused net::ERR_INSUFFICIENT_RESOURCES before; sequential batches of
+  // 500 stay well under any request-size/timeout limit even for an
+  // 11,000+ row Crystal Ball import). Resolves to the array of each
+  // batch's own return value, in order.
+  function bulkSequential(rows, batchSize, fn) {
+    var batches = chunk(rows, batchSize);
+    var results = [];
+    return batches.reduce(function (p, batch, idx) {
+      return p.then(function () {
+        return Promise.resolve(fn(batch, idx, batches.length)).then(function (r) { results.push(r); });
+      });
+    }, Promise.resolve()).then(function () { return results; });
+  }
+
   function runImport(groups) {
     var toCreate = groups.filter(function (g) { return !g.existing; });
     var createPayload = toCreate.map(function (g) {
@@ -1972,11 +2072,7 @@
     // refreshed by an import — never name/stage/notes, to avoid a
     // metrics-only sheet silently reverting hand-edited fields — so
     // re-running, say, a monthly LinkedIn export just updates the numbers
-    // on companies that are already tracked here. Sent as ONE bulk upsert
-    // rather than one request per company: with a few hundred already-known
-    // companies (the normal case for a repeat import), firing that many
-    // requests at once used to exceed the browser's own connection limit
-    // (net::ERR_INSUFFICIENT_RESOURCES) and fail completely, silently.
+    // on companies that are already tracked here.
     var toRefresh = groups.filter(function (g) { return g.existing; })
       .map(function (g) { return { id: g.existing.id, name: g.existing.name, patch: enrichmentPatch(g) }; })
       .filter(function (r) { return Object.keys(r.patch).length > 0; });
@@ -1987,19 +2083,28 @@
       // UPDATE under the hood, and companies.name has no default — Postgres
       // checks that even for rows that end up taking the UPDATE branch.
       var payload = toRefresh.map(function (r) { return Object.assign({ id: r.id, name: r.name }, r.patch); });
-      return supabase.from("companies").upsert(payload).then(function (res) {
-        if (res.error) throw new Error("Bijwerken van bedrijven mislukt: " + res.error.message);
-        return toRefresh.length;
-      });
+      return bulkSequential(payload, 500, function (batch, idx, total) {
+        if (total > 1) toast("Bedrijven bijwerken… (" + (idx + 1) + "/" + total + ")");
+        return supabase.from("companies").upsert(batch).then(function (res) {
+          if (res.error) throw new Error("Bijwerken van bedrijven mislukt: " + res.error.message);
+        });
+      }).then(function () { return toRefresh.length; });
     }
 
     function createCompanies() {
       if (!createPayload.length) return Promise.resolve({ nameToId: {}, count: 0 });
-      return supabase.from("companies").insert(createPayload).select().then(function (res) {
-        if (res.error) throw new Error("Aanmaken van bedrijven mislukt: " + res.error.message);
-        var nameToId = {};
-        (res.data || []).forEach(function (row) { nameToId[normalizeName(row.name)] = row.id; });
-        return { nameToId: nameToId, count: (res.data || []).length };
+      return bulkSequential(createPayload, 500, function (batch, idx, total) {
+        if (total > 1) toast("Bedrijven aanmaken… (" + (idx + 1) + "/" + total + ")");
+        return supabase.from("companies").insert(batch).select().then(function (res) {
+          if (res.error) throw new Error("Aanmaken van bedrijven mislukt: " + res.error.message);
+          return res.data || [];
+        });
+      }).then(function (batchResults) {
+        var nameToId = {}, count = 0;
+        batchResults.forEach(function (rows) {
+          rows.forEach(function (row) { nameToId[normalizeName(row.name)] = row.id; count++; });
+        });
+        return { nameToId: nameToId, count: count };
       });
     }
 
@@ -2014,10 +2119,12 @@
         });
       });
       if (!contactPayload.length) return Promise.resolve(0);
-      return supabase.from("contacts").insert(contactPayload).then(function (res) {
-        if (res.error) throw new Error("Import van contactpersonen mislukt: " + res.error.message);
-        return contactPayload.length;
-      });
+      return bulkSequential(contactPayload, 500, function (batch, idx, total) {
+        if (total > 1) toast("Contactpersonen toevoegen… (" + (idx + 1) + "/" + total + ")");
+        return supabase.from("contacts").insert(batch).then(function (res) {
+          if (res.error) throw new Error("Import van contactpersonen mislukt: " + res.error.message);
+        });
+      }).then(function () { return contactPayload.length; });
     }
 
     // A Crystal Ball import row carries both a SuperScore and the
@@ -2026,8 +2133,7 @@
     // knowing the current vs. previous value (which is all
     // companies.superscore/previous_superscore hold). Rows from any other
     // import source just won't have both fields set, so this is naturally
-    // a no-op for those — no source-specific branching needed. One bulk
-    // upsert, same reasoning as refreshEngagement() above.
+    // a no-op for those — no source-specific branching needed.
     function recordSuperscoreHistory(nameToId) {
       var rows = [];
       groups.forEach(function (g) {
@@ -2037,8 +2143,10 @@
         rows.push({ company_id: companyId, report_date: g.report_date, superscore: g.superscore });
       });
       if (!rows.length) return Promise.resolve();
-      return supabase.from("company_superscore_history").upsert(rows).then(function (res) {
-        if (res.error) console.error("Kon SuperScore-historie niet opslaan:", res.error); // non-fatal
+      return bulkSequential(rows, 500, function (batch) {
+        return supabase.from("company_superscore_history").upsert(batch).then(function (res) {
+          if (res.error) console.error("Kon SuperScore-historie niet opslaan:", res.error); // non-fatal
+        });
       });
     }
 
