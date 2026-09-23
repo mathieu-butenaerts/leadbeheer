@@ -970,17 +970,17 @@
       html += '  <div class="meta-block">';
       html += '    <span class="field-label">LinkedIn-betrokkenheid <span class="score tnum ' + scoreClass(engagementScoreVal) + '" style="margin-left:6px">' + engagementScoreVal + '</span></span>';
       html += '    <div class="engagement-grid">';
-      html += fieldBlock("Niveau", c.engagement_level);
-      html += fieldBlock("Org. impressies", numOrEmpty(c.organic_impressions), { mono: true });
-      html += fieldBlock("Org. interacties", numOrEmpty(c.organic_engagements), { mono: true });
-      html += fieldBlock("Betaald impressies", numOrEmpty(c.paid_impressions), { mono: true });
-      html += fieldBlock("Betaald kliks", numOrEmpty(c.paid_clicks), { mono: true });
-      html += fieldBlock("Betaald interacties", numOrEmpty(c.paid_engagements), { mono: true });
-      html += fieldBlock("Video views", numOrEmpty(c.paid_video_views), { mono: true });
-      html += fieldBlock("Conversies", numOrEmpty(c.paid_conversions), { mono: true });
-      html += fieldBlock("Leads", numOrEmpty(c.paid_leads), { mono: true });
-      html += fieldBlock("Qualified leads", numOrEmpty(c.paid_qualified_leads), { mono: true });
-      html += fieldBlock("Kost / qualified lead", c.cost_per_qualified_lead != null ? "€ " + c.cost_per_qualified_lead : "", { mono: true });
+      html += fieldBlock("Niveau ", c.engagement_level);
+      html += fieldBlock("Org. impressies ", numOrEmpty(c.organic_impressions), { mono: true });
+      html += fieldBlock("Org. interacties ", numOrEmpty(c.organic_engagements), { mono: true });
+      html += fieldBlock("Betaald impressies ", numOrEmpty(c.paid_impressions), { mono: true });
+      html += fieldBlock("Betaald kliks ", numOrEmpty(c.paid_clicks), { mono: true });
+      html += fieldBlock("Betaald interacties ", numOrEmpty(c.paid_engagements), { mono: true });
+      html += fieldBlock("Video views ", numOrEmpty(c.paid_video_views), { mono: true });
+      html += fieldBlock("Conversies ", numOrEmpty(c.paid_conversions), { mono: true });
+      html += fieldBlock("Leads ", numOrEmpty(c.paid_leads), { mono: true });
+      html += fieldBlock("Qualified leads ", numOrEmpty(c.paid_qualified_leads), { mono: true });
+      html += fieldBlock("Kost / qualified lead ", c.cost_per_qualified_lead != null ? "€ " + c.cost_per_qualified_lead : "", { mono: true });
       html += '    </div>';
       html += '  </div>';
     }
@@ -997,18 +997,18 @@
       }
       html += '</span>';
       html += '    <div class="engagement-grid">';
-      html += fieldBlock("Domain", c.domain);
-      html += fieldBlock("Grootte", c.company_size);
-      html += fieldBlock("Omzet", c.annual_revenue);
-      html += fieldBlock("Industrie", c.industry);
-      html += fieldBlock("Land", c.country);
-      html += fieldBlock("Adres", c.address);
-      html += fieldBlock("Solution", c.solution);
-      html += fieldBlock("Sub-solution", c.sub_solution);
-      html += fieldBlock("Technologie", c.installed_technology);
-      html += fieldBlock("Topics", c.topics);
-      html += fieldBlock("Vendors", c.vendors);
-      html += fieldBlock("Rapportdatum", c.report_date ? formatDate(c.report_date) : "");
+      html += fieldBlock("Domain ", c.domain);
+      html += fieldBlock("Grootte ", c.company_size);
+      html += fieldBlock("Omzet ", c.annual_revenue);
+      html += fieldBlock("Industrie ", c.industry);
+      html += fieldBlock("Land ", c.country);
+      html += fieldBlock("Adres ", c.address);
+      html += fieldBlock("Solution ", c.solution);
+      html += fieldBlock("Sub-solution ", c.sub_solution);
+      html += fieldBlock("Technologie ", c.installed_technology);
+      html += fieldBlock("Topics ", c.topics);
+      html += fieldBlock("Vendors ", c.vendors);
+      html += fieldBlock("Rapportdatum ", c.report_date ? formatDate(c.report_date) : "");
       html += '    </div>';
       var history = state.superscoreHistory[c.id] || [];
       if (history.length >= 2) {
@@ -1046,11 +1046,11 @@
   }
 
   function followUpFieldBlock(dateStr) {
-    if (!dateStr) return fieldBlock("Vervolgdatum", "");
+    if (!dateStr) return fieldBlock("Vervolgdatum ", "");
     var status = followUpStatus(dateStr);
     var suffix = status === "overdue" ? " · verlopen" : (status === "week" ? " · binnenkort" : "");
     var cls = status === "overdue" ? " fu-overdue" : (status === "week" ? " fu-soon" : "");
-    return '<div class="cf"><span class="k">Vervolgdatum</span><span class="v tnum' + cls + '">' + esc(formatDate(dateStr) + suffix) + '</span></div>';
+    return '<div class="cf"><span class="k">Vervolgdatum </span><span class="v tnum' + cls + '">' + esc(formatDate(dateStr) + suffix) + '</span></div>';
   }
 
   function renderContactCard(companyId, p) {
