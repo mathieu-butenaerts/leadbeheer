@@ -2235,18 +2235,18 @@
     e.target.value = ""; // allow re-selecting the same file later
     if (file) handleImportFile(file);
   });
-  $("#btn-import-linkedin").addEventListener("click", function () { $("#import-linkedin-file").click(); });
-  $("#import-linkedin-file").addEventListener("change", function (e) {
-    var file = e.target.files[0];
-    e.target.value = "";
-    if (file) handleLinkedinImportFile(file);
-  });
-  $("#btn-import-crystalball").addEventListener("click", function () { $("#import-crystalball-file").click(); });
-  $("#import-crystalball-file").addEventListener("change", function (e) {
-    var file = e.target.files[0];
-    e.target.value = "";
-    if (file) handleCrystalBallImportFile(file);
-  });
+  // $("#btn-import-linkedin").addEventListener("click", function () { $("#import-linkedin-file").click(); });
+  // $("#import-linkedin-file").addEventListener("change", function (e) {
+  //   var file = e.target.files[0];
+  //   e.target.value = "";
+  //   if (file) handleLinkedinImportFile(file);
+  // });
+  // $("#btn-import-crystalball").addEventListener("click", function () { $("#import-crystalball-file").click(); });
+  // $("#import-crystalball-file").addEventListener("change", function (e) {
+  //   var file = e.target.files[0];
+  //   e.target.value = "";
+  //   if (file) handleCrystalBallImportFile(file);
+  // });
 
   (async function boot() {
     var profile = await window.requireUser();
@@ -2277,7 +2277,8 @@
       // earlier let Importeren run against an empty company list, so every
       // row in the sheet looked "new" and got inserted as a duplicate
       // instead of being matched to what's already there.
-      ["btn-add-company", "btn-import", "btn-export", "btn-import-linkedin", "btn-import-crystalball"].forEach(function (id) {
+      // ["btn-add-company", "btn-import", "btn-export", "btn-import-linkedin", "btn-import-crystalball"].forEach(function (id) {
+      ["btn-add-company", "btn-import", "btn-export"].forEach(function (id) {
         var el = $("#" + id);
         el.removeAttribute("disabled");
         el.removeAttribute("title");
