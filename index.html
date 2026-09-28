@@ -594,6 +594,12 @@
     return d.toLocaleDateString("nl-NL", { day: "2-digit", month: "2-digit", year: "numeric" });
   }
 
+  var DUTCH_MONTH_ABBR = ["jan", "feb", "mrt", "apr", "mei", "jun", "jul", "aug", "sep", "okt", "nov", "dec"];
+  function defaultImportTagName(sourceLabel) {
+    var now = new Date();
+    return (sourceLabel ? sourceLabel + " " : "") + DUTCH_MONTH_ABBR[now.getMonth()] + " " + now.getFullYear();
+  }
+
   function numOrEmpty(n) {
     return n == null ? "" : String(n);
   }
@@ -1681,7 +1687,7 @@
       var sheet = wb.Sheets[wb.SheetNames[0]];
       var rows = XLSX.utils.sheet_to_json(sheet, { defval: "" });
       if (!rows.length) { toast("Het bestand bevat geen rijen"); return; }
-      processImportRows(rows);
+      processImportRows(rows, "Excel-import");
     };
     reader.readAsArrayBuffer(file);
   }
@@ -1768,7 +1774,7 @@
         });
         return mapped;
       });
-      processImportRows(rows);
+      processImportRows(rows, "LinkedIn");
     });
   }
 
@@ -1890,7 +1896,7 @@
     $("#modal-save").addEventListener("click", function () {
       var rows = filteredRows();
       if (!rows.length) { toast("Geen rijen na filtering"); return; }
-      processImportRows(rows.map(remapCrystalBallRow));
+      processImportRows(rows.map(remapCrystalBallRow), "Crystal Ball");
     });
   }
 
@@ -1898,7 +1904,7 @@
   // flags rows that look like duplicates of what's already in the database
   // (matched by email first, else by first+last name) or of an earlier row
   // in the same file — so uploading the same sheet twice is harmless.
-  function processImportRows(rawRows) {
+  function processImportRows(rawRows, sourceLabel) {
     function val(row, key) { return String(row[key] == null ? "" : row[key]).trim(); }
     function numVal(row, key) {
       var raw = row[key];
@@ -1981,10 +1987,10 @@
       toast(skippedNoCompany ? "Geen geldige rijen — elke rij heeft een Company nodig" : "Geen rijen gevonden");
       return;
     }
-    openImportPreviewModal(groupList);
+    openImportPreviewModal(groupList, sourceLabel);
   }
 
-  function openImportPreviewModal(groups) {
+  function openImportPreviewModal(groups, sourceLabel) {
     var newCompanies = groups.filter(function (g) { return !g.existing; }).length;
     var existingTouched = groups.filter(function (g) { return g.existing; }).length;
     var allContacts = [];
@@ -2003,6 +2009,10 @@
     html += '      <span>Aangevulde bedrijven: <b>' + existingTouched + '</b></span>';
     html += '      <span class="ok">Nieuwe contactpersonen: <b>' + newContacts + '</b></span>';
     html += '      <span class="skip">Overgeslagen als dubbel: <b>' + dupes.length + '</b></span>';
+    html += '    </div>';
+    html += '    <div class="form-field full">';
+    html += '      <label>Tag toevoegen aan alle bedrijven in deze import (leeg = geen tag)</label>';
+    html += '      <input type="text" id="import-tag-name" list="tag-options" value="' + esc(defaultImportTagName(sourceLabel)) + '">';
     html += '    </div>';
     if (dupes.length) {
       html += '    <div>';
@@ -2030,7 +2040,7 @@
 
     $("#overlay").addEventListener("click", function (e) { if (e.target.id === "overlay") closeModal(); });
     $("#modal-cancel").addEventListener("click", closeModal);
-    $("#modal-save").addEventListener("click", function () { runImport(groups); });
+    $("#modal-save").addEventListener("click", function () { runImport(groups, $("#import-tag-name").value.trim()); });
   }
 
   // For an EXISTING company (g.existing set), every field always gets a
@@ -2092,7 +2102,24 @@
     }, Promise.resolve()).then(function () { return results; });
   }
 
-  function runImport(groups) {
+  // Finds a tag by name (case-insensitive, same rule addTagToCompany
+  // uses), or creates it. If two imports (or an import racing a manual
+  // tag-add) create the same name at once, the unique index on
+  // lower(name) rejects the second insert — re-fetch by name instead of
+  // failing the whole import over a race that just means someone else won.
+  function findOrCreateTagId(name) {
+    var existing = state.tags.find(function (t) { return t.name.toLowerCase() === name.toLowerCase(); });
+    if (existing) return Promise.resolve(existing.id);
+    return supabase.from("tags").insert({ name: name }).select().single().then(function (res) {
+      if (!res.error) return res.data.id;
+      return supabase.from("tags").select("id").ilike("name", name).limit(1).single().then(function (res2) {
+        if (res2.error || !res2.data) throw new Error('Kon tag "' + name + '" niet aanmaken: ' + res.error.message);
+        return res2.data.id;
+      });
+    });
+  }
+
+  function runImport(groups, tagName) {
     var toCreate = groups.filter(function (g) { return !g.existing; });
     var createPayload = toCreate.map(function (g) {
       return Object.assign({ name: g.name, linkedin: g.linkedin, stage: g.stage || "nieuw", notes: g.notes }, enrichmentPatch(g));
@@ -2181,14 +2208,39 @@
       });
     }
 
+    // Tags every company touched by this import (new AND refreshed —
+    // "for all entries", not just new ones) with one shared tag, so a
+    // batch of companies can be found/filtered later by when and how they
+    // were added. Company_tags' composite PK makes the upsert idempotent,
+    // so re-tagging a company that already has this tag (e.g. a repeat
+    // import reusing the same tag name) is a harmless no-op.
+    function applyImportTag(created) {
+      if (!tagName) return Promise.resolve(0);
+      return findOrCreateTagId(tagName).then(function (tagId) {
+        var rows = [];
+        groups.forEach(function (g) {
+          var companyId = g.existing ? g.existing.id : created.nameToId[normalizeName(g.name)];
+          if (companyId) rows.push({ company_id: companyId, tag_id: tagId });
+        });
+        if (!rows.length) return 0;
+        return bulkSequential(rows, 500, function (batch, idx, total) {
+          if (total > 1) toast("Tag toepassen… (" + (idx + 1) + "/" + total + ")");
+          return supabase.from("company_tags").upsert(batch).then(function (res) {
+            if (res.error) console.error("Kon tag niet toepassen:", res.error); // non-fatal
+          });
+        }).then(function () { return rows.length; });
+      });
+    }
+
     Promise.all([refreshEngagement(), createCompanies()]).then(function (results) {
       var refreshedCount = results[0], created = results[1];
-      return Promise.all([insertContacts(created.nameToId), recordSuperscoreHistory(created.nameToId)]).then(function (r) {
-        var contactsCount = r[0];
+      return Promise.all([insertContacts(created.nameToId), recordSuperscoreHistory(created.nameToId), applyImportTag(created)]).then(function (r) {
+        var contactsCount = r[0], taggedCount = r[2];
         var parts = [];
         if (created.count) parts.push(created.count + " nieuw" + (created.count === 1 ? " bedrijf" : "e bedrijven"));
         if (refreshedCount) parts.push(refreshedCount + " " + (refreshedCount === 1 ? "bedrijf" : "bedrijven") + " bijgewerkt");
         if (contactsCount) parts.push(contactsCount + " contactperso" + (contactsCount === 1 ? "on" : "nen") + " toegevoegd");
+        if (taggedCount) parts.push('tag "' + tagName + '" toegepast op ' + taggedCount + (taggedCount === 1 ? " bedrijf" : " bedrijven"));
         toast(parts.length ? "Import voltooid: " + parts.join(", ") : "Import voltooid — geen wijzigingen nodig");
         closeModal();
       });
