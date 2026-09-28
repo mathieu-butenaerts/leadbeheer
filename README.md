@@ -145,6 +145,17 @@ preloaded for every company up front (unlike contacts/tags) — it's fetched
 only for whichever company you expand, since it's drill-down detail, not
 something the list view or filters need.
 
+## Bulk-editing companies
+
+A checkbox on each company row (and one in the header to select/deselect
+everything currently visible — respects the active filters, not just what's
+on screen) enables a bar above the table for acting on the whole selection
+at once: change Fase, add a tag, or delete — all in one batched request
+(chunked via the same `bulkSequential()` helper an import uses, not one
+request per row). Selection persists across filter/search changes and only
+clears when you click "Selectie wissen," act on it, or a selected company is
+deleted (by you or anyone else — cleaned up automatically either way).
+
 ## Tagging on import
 
 Two ways an import can set tags, usable together:

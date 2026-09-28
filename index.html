@@ -160,6 +160,15 @@
   .filters select:focus{ outline:2px solid var(--blauw); outline-offset:1px; }
   .filters-spacer{ flex:1; }
   .filters-actions{ display:flex; gap:8px; flex-wrap:wrap; }
+
+  /* ---- bulk action bar ---- */
+  .bulk-bar{ display:flex; flex-wrap:wrap; align-items:center; gap:10px; background:rgba(25,157,217,0.10);
+    border:1px solid rgba(25,157,217,0.35); border-radius:14px; padding:10px 14px; margin-bottom:16px; font-size:13px; }
+  .bulk-bar #bulkBarCount{ font-weight:700; color:var(--blauw); white-space:nowrap; }
+  .bulk-bar-sep{ width:1px; align-self:stretch; background:rgba(255,255,255,0.12); }
+  .bulk-bar select, .bulk-bar input[type=text]{ font-family:inherit; font-size:12.5px; padding:8px 10px; border-radius:8px;
+    border:1px solid var(--border); background:var(--bg2); color:var(--text); }
+  .bulk-bar input[type=text]{ min-width:180px; }
   .stage-pills{ display:flex; flex-wrap:wrap; gap:8px; }
   .stage-pill-btn{ font-size:12px; font-weight:600; padding:7px 14px; border-radius:999px; cursor:pointer;
     background:rgba(255,255,255,0.04); color:var(--muted); border:1px solid rgba(255,255,255,0.1); }
@@ -351,10 +360,25 @@
     </div>
   </div>
 
+  <div class="bulk-bar" id="bulkBar" style="display:none;">
+    <span id="bulkBarCount"></span>
+    <button class="btn btn-quiet" id="bulkBarClear">Selectie wissen</button>
+    <div class="bulk-bar-sep"></div>
+    <select id="bulkBarStage">
+      <option value="">Fase wijzigen naar…</option>
+    </select>
+    <div class="bulk-bar-sep"></div>
+    <input type="text" id="bulkBarTagInput" list="tag-options" placeholder="Tag toevoegen…">
+    <button class="btn btn-quiet" id="bulkBarTagAdd">+ Toevoegen</button>
+    <div class="bulk-bar-sep"></div>
+    <button class="btn btn-quiet" id="bulkBarDelete" style="color:var(--magenta);border-color:var(--magenta);">Verwijderen</button>
+  </div>
+
   <div class="table-wrap">
     <table>
       <thead>
         <tr>
+          <th style="width:20px"><input type="checkbox" id="selectAllCheckbox"></th>
           <th style="width:24px"></th>
           <th data-sort="name">Bedrijf<span class="sort-ind" data-sort-ind="name"></span></th>
           <th data-sort="stage">Fase<span class="sort-ind" data-sort-ind="stage"></span></th>
@@ -364,7 +388,7 @@
           <th style="width:40px"></th>
         </tr>
       </thead>
-      <tbody id="company-tbody"><tr><td colspan="7"><div class="loading">Gegevens laden…</div></td></tr></tbody>
+      <tbody id="company-tbody"><tr><td colspan="8"><div class="loading">Gegevens laden…</div></td></tr></tbody>
     </table>
   </div>
 </div>
@@ -394,6 +418,7 @@
     tags: [],
     companyTagIds: {},
     superscoreHistory: {}, // companyId -> [{report_date, superscore}, ...], fetched lazily on expand
+    selectedIds: {}, // companyId -> true, for the bulk-action checkboxes
     expandedCompanyId: null,
     search: "",
     stageFilter: "all",
@@ -512,6 +537,20 @@
     renderFollowupRanklist();
     renderSortIndicators();
     renderTable();
+    renderBulkBar();
+  }
+
+  function renderBulkBar() {
+    var selectedCount = Object.keys(state.selectedIds).length;
+    var bar = $("#bulkBar");
+    bar.style.display = selectedCount ? "flex" : "none";
+    $("#bulkBarCount").textContent = selectedCount + " geselecteerd";
+
+    var visible = filteredCompanies();
+    var visibleSelected = visible.filter(function (c) { return state.selectedIds[c.id]; }).length;
+    var selectAll = $("#selectAllCheckbox");
+    selectAll.checked = visible.length > 0 && visibleSelected === visible.length;
+    selectAll.indeterminate = visibleSelected > 0 && visibleSelected < visible.length;
   }
 
   // The one place tags are filtered, deleted, and (via the count) audited —
@@ -879,7 +918,7 @@
     var list = filteredCompanies();
     var root = $("#company-tbody");
     if (!list.length) {
-      root.innerHTML = '<tr><td colspan="7"><div class="empty-state">Geen bedrijven gevonden. Pas je zoekopdracht aan of voeg een nieuw bedrijf toe.</div></td></tr>';
+      root.innerHTML = '<tr><td colspan="8"><div class="empty-state">Geen bedrijven gevonden. Pas je zoekopdracht aan of voeg een nieuw bedrijf toe.</div></td></tr>';
       return;
     }
     root.innerHTML = list.map(renderCompanyRows).join("");
@@ -928,6 +967,7 @@
     }).join("");
     var html = '';
     html += '<tr class="rij' + (isOpen ? ' open' : '') + '" data-toggle="' + c.id + '">';
+    html += '  <td onclick="event.stopPropagation()"><input type="checkbox" class="row-select" data-select-company="' + c.id + '"' + (state.selectedIds[c.id] ? " checked" : "") + '></td>';
     html += '  <td><span class="chev"><svg width="9" height="9" viewBox="0 0 10 10" fill="none"><path d="M2 1L7.5 5L2 9" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg></span></td>';
     var rowTags = (state.companyTagIds[c.id] || []).map(tagById).filter(Boolean);
     var rowTagChips = rowTags.length ? '<span class="tag-chip-row">' + rowTags.map(function (t) { return renderTagChip(t); }).join("") + '</span>' : "";
@@ -943,7 +983,7 @@
     html += '  <td class="actions-cell"><button class="icon-btn danger" data-delete-company="' + c.id + '" title="Bedrijf verwijderen" onclick="event.stopPropagation()"><svg width="14" height="14" viewBox="0 0 15 15" fill="none"><path d="M2.5 4H12.5M5.5 4V2.8C5.5 2.3 5.9 2 6.3 2H8.7C9.1 2 9.5 2.3 9.5 2.8V4M6 6.5V11M9 6.5V11M3.5 4L4 12C4 12.5 4.4 13 5 13H10C10.6 13 11 12.5 11 12L11.5 4" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/></svg></button></td>';
     html += '</tr>';
     if (isOpen) {
-      html += '<tr class="detail"><td colspan="7"><div class="detail-inner">' + renderCompanyDetail(c) + '</div></td></tr>';
+      html += '<tr class="detail"><td colspan="8"><div class="detail-inner">' + renderCompanyDetail(c) + '</div></td></tr>';
     }
     return html;
   }
@@ -1111,6 +1151,13 @@
   function attachHandlers(root) {
     Array.prototype.forEach.call(root.querySelectorAll("[data-toggle]"), function (el) {
       el.addEventListener("click", function () { toggleCompany(el.getAttribute("data-toggle")); });
+    });
+    Array.prototype.forEach.call(root.querySelectorAll("[data-select-company]"), function (el) {
+      el.addEventListener("change", function () {
+        var id = el.getAttribute("data-select-company");
+        if (el.checked) state.selectedIds[id] = true; else delete state.selectedIds[id];
+        renderBulkBar();
+      });
     });
     Array.prototype.forEach.call(root.querySelectorAll("[data-stage-select]"), function (el) {
       el.addEventListener("change", function () {
@@ -2306,7 +2353,83 @@
     });
   }
 
+  // ---------- bulk actions ----------
+
+  function clearSelection() {
+    state.selectedIds = {};
+    renderTable();
+    renderBulkBar();
+  }
+
+  function bulkChangeStage(stage) {
+    var ids = Object.keys(state.selectedIds);
+    if (!ids.length || !stage) return;
+    bulkSequential(ids, 500, function (batch, idx, total) {
+      if (total > 1) toast("Fase wijzigen… (" + (idx + 1) + "/" + total + ")");
+      return supabase.from("companies").update({ stage: stage }).in("id", batch).then(function (res) {
+        if (res.error) throw new Error("Fase wijzigen mislukt: " + res.error.message);
+      });
+    }).then(function () {
+      toast("Fase gewijzigd voor " + ids.length + (ids.length === 1 ? " bedrijf" : " bedrijven"));
+    }).catch(function (err) { console.error(err); toast(err.message || "Fase wijzigen mislukt"); });
+  }
+
+  function bulkAddTag() {
+    var name = $("#bulkBarTagInput").value.trim();
+    if (!name) { toast("Geef een tagnaam op"); return; }
+    var ids = Object.keys(state.selectedIds);
+    if (!ids.length) return;
+    findOrCreateTagId(name).then(function (tagId) {
+      var rows = ids.map(function (id) { return { company_id: id, tag_id: tagId }; });
+      return bulkSequential(rows, 500, function (batch, idx, total) {
+        if (total > 1) toast("Tag toepassen… (" + (idx + 1) + "/" + total + ")");
+        return supabase.from("company_tags").upsert(batch).then(function (res) {
+          if (res.error) throw new Error("Tag toepassen mislukt: " + res.error.message);
+        });
+      });
+    }).then(function () {
+      toast('Tag "' + name + '" toegepast op ' + ids.length + (ids.length === 1 ? " bedrijf" : " bedrijven"));
+      $("#bulkBarTagInput").value = "";
+    }).catch(function (err) { console.error(err); toast(err.message || "Tag toepassen mislukt"); });
+  }
+
+  function bulkDelete() {
+    var ids = Object.keys(state.selectedIds);
+    if (!ids.length) return;
+    if (!confirm(ids.length + (ids.length === 1 ? " bedrijf" : " bedrijven") + " en al hun contactpersonen verwijderen? Dit kan niet ongedaan gemaakt worden.")) return;
+    bulkSequential(ids, 500, function (batch, idx, total) {
+      if (total > 1) toast("Verwijderen… (" + (idx + 1) + "/" + total + ")");
+      return supabase.from("companies").delete().in("id", batch).then(function (res) {
+        if (res.error) throw new Error("Verwijderen mislukt: " + res.error.message);
+      });
+    }).then(function () {
+      toast(ids.length + (ids.length === 1 ? " bedrijf" : " bedrijven") + " verwijderd");
+      clearSelection();
+    }).catch(function (err) { console.error(err); toast(err.message || "Verwijderen mislukt"); });
+  }
+
   // ---------- boot ----------
+
+  $("#bulkBarStage").innerHTML = '<option value="">Fase wijzigen naar…</option>' +
+    STAGES.map(function (s) { return '<option value="' + s.key + '">' + esc(s.label) + '</option>'; }).join("");
+  $("#bulkBarStage").addEventListener("change", function () {
+    bulkChangeStage(this.value);
+    this.value = "";
+  });
+  $("#bulkBarTagAdd").addEventListener("click", bulkAddTag);
+  $("#bulkBarTagInput").addEventListener("keydown", function (e) {
+    if (e.key === "Enter") { e.preventDefault(); bulkAddTag(); }
+  });
+  $("#bulkBarDelete").addEventListener("click", bulkDelete);
+  $("#bulkBarClear").addEventListener("click", clearSelection);
+  $("#selectAllCheckbox").addEventListener("change", function () {
+    var checked = this.checked;
+    filteredCompanies().forEach(function (c) {
+      if (checked) state.selectedIds[c.id] = true; else delete state.selectedIds[c.id];
+    });
+    renderTable();
+    renderBulkBar();
+  });
 
   $("#btn-add-company").addEventListener("click", openCompanyModal);
   $("#btn-logout").addEventListener("click", function () { window.logout(); });
@@ -2466,6 +2589,7 @@
     var idx = state.companies.findIndex(function (c) { return c.id === rec.id; });
     if (payload.eventType === "DELETE") {
       if (idx >= 0) state.companies.splice(idx, 1);
+      delete state.selectedIds[rec.id]; // no dangling selection for a row that no longer exists
     } else if (idx >= 0) {
       state.companies[idx] = payload.new;
     } else {
