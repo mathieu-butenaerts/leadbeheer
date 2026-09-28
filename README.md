@@ -145,6 +145,28 @@ preloaded for every company up front (unlike contacts/tags) — it's fetched
 only for whichever company you expand, since it's drill-down detail, not
 something the list view or filters need.
 
+## Tagging on import
+
+Two ways an import can set tags, usable together:
+
+- **One shared tag for the whole batch.** The import-confirmation screen has
+  a "Tag toevoegen aan alle bedrijven in deze import" field, pre-filled with
+  a suggestion like `Excel-import sep 2026` (source + current month/year) —
+  edit it or clear it to skip. Applies to every company the import touches,
+  new and refreshed alike.
+- **Per-company tags from the template's own `Tags` column.** One cell,
+  comma- or semicolon-separated (`Klant, Prioriteit hoog`) — each company
+  gets the union of whatever its own row(s) specify, not just the first
+  row's value (unlike single-value fields such as Bedrijfsnotities, tags
+  are additive). "Exporteren" writes a company's current tags back into
+  this same column, so exporting, editing in Excel, and re-importing keeps
+  them intact.
+
+Both reuse the existing tag system — matching an existing tag
+case-insensitively or creating it, same as adding one by hand on a
+company's Tags field — and are batched through the same `bulkSequential()`
+helper as everything else in an import.
+
 ## Lusha lookups
 
 A magnifying-glass button on a contact card, and an "Opzoeken via Lusha"

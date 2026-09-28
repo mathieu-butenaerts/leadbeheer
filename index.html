@@ -462,7 +462,7 @@
 
   var ENRICHMENT_FIELDS = ENGAGEMENT_FIELDS.concat(CRYSTALBALL_FIELDS);
 
-  var TEMPLATE_COLUMNS = ["Company", "Company LinkedIn", "Fase", "Bedrijfsnotities"]
+  var TEMPLATE_COLUMNS = ["Company", "Company LinkedIn", "Fase", "Bedrijfsnotities", "Tags"]
     .concat(ENRICHMENT_FIELDS.map(function (f) { return f[0]; }))
     .concat([
       "First Name", "Last Name", "Job Title", "Gender",
@@ -598,6 +598,12 @@
   function defaultImportTagName(sourceLabel) {
     var now = new Date();
     return (sourceLabel ? sourceLabel + " " : "") + DUTCH_MONTH_ABBR[now.getMonth()] + " " + now.getFullYear();
+  }
+
+  // A template's "Tags" cell holds one or more tag names in one cell,
+  // comma- or semicolon-separated (e.g. "Klant, Prioriteit hoog").
+  function parseTagList(raw) {
+    return String(raw == null ? "" : raw).split(/[,;]/).map(function (s) { return s.trim(); }).filter(Boolean);
   }
 
   function numOrEmpty(n) {
@@ -1629,6 +1635,7 @@
       "Company LinkedIn": "https://www.linkedin.com/company/van-herck-verpakkingen",
       "Fase": "Gecontacteerd",
       "Bedrijfsnotities": "Bezig met vervanging van hun huidige leverancier.",
+      "Tags": "Klant, Prioriteit hoog",
       "Engagement Level": "Medium",
       "Organic Impressions": 4200, "Organic Engagements": 165,
       "Paid Impressions": 9800, "Paid Clicks": 210, "Paid Engagements": 260,
@@ -1651,7 +1658,8 @@
     var rows = [TEMPLATE_COLUMNS];
     state.companies.forEach(function (c) {
       var contacts = state.contactsByCompany[c.id] || [];
-      var base = { "Company": c.name, "Company LinkedIn": c.linkedin, "Fase": stageInfo(c.stage).label, "Bedrijfsnotities": c.notes };
+      var tagNamesForExport = (state.companyTagIds[c.id] || []).map(function (id) { var t = tagById(id); return t ? t.name : null; }).filter(Boolean);
+      var base = { "Company": c.name, "Company LinkedIn": c.linkedin, "Fase": stageInfo(c.stage).label, "Bedrijfsnotities": c.notes, "Tags": tagNamesForExport.join(", ") };
       ENRICHMENT_FIELDS.forEach(function (f) { base[f[0]] = c[f[1]] != null ? c[f[1]] : ""; });
       if (!contacts.length) {
         rows.push(rowToArray(base));
@@ -1940,7 +1948,7 @@
         groups[key] = {
           name: companyName, linkedin: "", stage: "", notes: "",
           existing: existingCompanyByKey[key] || null,
-          contacts: [], seenKeys: {}
+          contacts: [], seenKeys: {}, tagNames: {}
         };
         order.push(key);
       }
@@ -1948,6 +1956,14 @@
       if (!g.linkedin) g.linkedin = val(row, "Company LinkedIn");
       if (!g.stage) g.stage = stageKeyFromLabel(val(row, "Fase"));
       if (!g.notes) g.notes = val(row, "Bedrijfsnotities");
+      // Union across every row for this company, not "first wins" — tags
+      // are additive (row 1 saying "Klant" and row 2 saying "Prioriteit
+      // hoog" should both land on the company), unlike a single-value
+      // field like notes where only one row's text can win.
+      parseTagList(row["Tags"]).forEach(function (t) {
+        var tagKey = t.toLowerCase();
+        if (!g.tagNames[tagKey]) g.tagNames[tagKey] = t;
+      });
       ENRICHMENT_FIELDS.forEach(function (f) {
         var col = f[0], dbKey = f[1], type = f[2];
         if (g[dbKey] != null) return; // first row with an actual value for this field wins
@@ -2232,15 +2248,55 @@
       });
     }
 
+    // Per-company tags from the sheet's own "Tags" column, on top of the
+    // one shared batch tag above — a company can come with its own
+    // "Klant, Prioriteit hoog" while the whole import also gets tagged
+    // "Excel-import sep 2026". Every distinct tag name across the WHOLE
+    // import is found-or-created once (sequentially, not per company —
+    // dozens of distinct names at most, so no need for bulkSequential's
+    // batching here), then every (company, tag) link goes out in one
+    // batched upsert.
+    function applyPerRowTags(created) {
+      var allNames = {}; // lowercase -> display name, first-seen casing wins
+      groups.forEach(function (g) {
+        Object.keys(g.tagNames).forEach(function (k) { if (!allNames[k]) allNames[k] = g.tagNames[k]; });
+      });
+      var uniqueKeys = Object.keys(allNames);
+      if (!uniqueKeys.length) return Promise.resolve(0);
+
+      return uniqueKeys.reduce(function (p, key) {
+        return p.then(function (map) {
+          return findOrCreateTagId(allNames[key]).then(function (id) { map[key] = id; return map; });
+        });
+      }, Promise.resolve({})).then(function (keyToTagId) {
+        var rows = [];
+        groups.forEach(function (g) {
+          var tagKeys = Object.keys(g.tagNames);
+          if (!tagKeys.length) return;
+          var companyId = g.existing ? g.existing.id : created.nameToId[normalizeName(g.name)];
+          if (!companyId) return;
+          tagKeys.forEach(function (key) { rows.push({ company_id: companyId, tag_id: keyToTagId[key] }); });
+        });
+        if (!rows.length) return 0;
+        return bulkSequential(rows, 500, function (batch, idx, total) {
+          if (total > 1) toast("Tags uit sjabloon toepassen… (" + (idx + 1) + "/" + total + ")");
+          return supabase.from("company_tags").upsert(batch).then(function (res) {
+            if (res.error) console.error("Kon tags uit sjabloon niet toepassen:", res.error); // non-fatal
+          });
+        }).then(function () { return rows.length; });
+      });
+    }
+
     Promise.all([refreshEngagement(), createCompanies()]).then(function (results) {
       var refreshedCount = results[0], created = results[1];
-      return Promise.all([insertContacts(created.nameToId), recordSuperscoreHistory(created.nameToId), applyImportTag(created)]).then(function (r) {
-        var contactsCount = r[0], taggedCount = r[2];
+      return Promise.all([insertContacts(created.nameToId), recordSuperscoreHistory(created.nameToId), applyImportTag(created), applyPerRowTags(created)]).then(function (r) {
+        var contactsCount = r[0], taggedCount = r[2], perRowTagCount = r[3];
         var parts = [];
         if (created.count) parts.push(created.count + " nieuw" + (created.count === 1 ? " bedrijf" : "e bedrijven"));
         if (refreshedCount) parts.push(refreshedCount + " " + (refreshedCount === 1 ? "bedrijf" : "bedrijven") + " bijgewerkt");
         if (contactsCount) parts.push(contactsCount + " contactperso" + (contactsCount === 1 ? "on" : "nen") + " toegevoegd");
         if (taggedCount) parts.push('tag "' + tagName + '" toegepast op ' + taggedCount + (taggedCount === 1 ? " bedrijf" : " bedrijven"));
+        if (perRowTagCount) parts.push(perRowTagCount + " tag" + (perRowTagCount === 1 ? "" : "s") + " uit sjabloon toegepast");
         toast(parts.length ? "Import voltooid: " + parts.join(", ") : "Import voltooid — geen wijzigingen nodig");
         closeModal();
       });
