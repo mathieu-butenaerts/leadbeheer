@@ -72,6 +72,7 @@ def migrate(df):
 
 
 def main():
+    print("hello")
     if len(sys.argv) < 2:
         raise SystemExit(f"Usage: python {Path(__file__).name} input.xlsx [output.xlsx]")
     in_path = Path(sys.argv[1])
@@ -79,6 +80,7 @@ def main():
 
     df = read_source(in_path, REQUIRED_COLUMNS)
     rows = migrate(df)
+    print(len(rows))
     write_output(rows, out_path)
 
 
