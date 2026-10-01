@@ -1,3 +1,4 @@
+from migrate_custom_field_31 import main as main_4
 from migrate_land import main as main_3
 from migrate_native_format import main as main_2
 from migrate_plaats_regio import main as main_1
@@ -12,7 +13,9 @@ def main():
     main_2("C:/Users/MathieuButenaerts/projects/leadbeheer/excels/e2.xlsx", out_path)
     print(3)
     main_3("C:/Users/MathieuButenaerts/projects/leadbeheer/excels/e3.xlsx", out_path)
-    
+    print(4)
+    main_4("C:/Users/MathieuButenaerts/projects/leadbeheer/excels/e4.xlsx", out_path)
+
 
 
 if __name__ == "__main__":
