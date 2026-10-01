@@ -153,12 +153,12 @@ runs `tools/export_database_snapshot.py` every day at 03:00 UTC (and
 on-demand via Actions > Daily Database Backup > Run workflow), pulling
 every company, contact, and tag straight from Supabase — not a copy of
 whatever's in a browser tab — and committing the result to
-`backups/leadbeheer-export.xlsx`. Same template shape the app itself
-imports/exports, so this file is a real backup: re-importable through
-"Importeren" if it's ever needed, not just something to look at. The file
-is overwritten each run (not dated/accumulated), so its git history *is*
-its backup history — `git log -- backups/leadbeheer-export.xlsx` to see
-every day's snapshot, checkout any past commit to recover one.
+`backups/leadbeheer-export-<date>.xlsx`, one new file per day. Same
+template shape the app itself imports/exports, so each file is a real
+backup: re-importable through "Importeren" if it's ever needed, not just
+something to look at. Files accumulate in `backups/` rather than being
+overwritten, so the full history is just the directory listing — no need
+to dig through git log to recover a past day's snapshot.
 
 One-time setup: add two **repository** secrets (Settings > Secrets and
 variables > Actions > New repository secret — not the same place the

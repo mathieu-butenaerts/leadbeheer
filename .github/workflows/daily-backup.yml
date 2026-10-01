@@ -31,7 +31,7 @@ jobs:
         run: |
           git config user.name  "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add backups/leadbeheer-export.xlsx
+          git add backups/*.xlsx
           git diff --staged --quiet && echo "geen wijzigingen" && exit 0
           git commit -m "Dagelijkse database-export $(date -u +%F)"
           git pull --rebase --autostash
