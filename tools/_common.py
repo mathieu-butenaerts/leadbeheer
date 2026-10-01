@@ -11,9 +11,19 @@ import pandas as pd
 
 # Must match TEMPLATE_COLUMNS in index.html exactly (same order, same
 # spelling) -- this is what "Importeren" in the app expects as the header
-# row. The ENGAGEMENT_COLUMNS block is optional company-level LinkedIn Page
-# metrics (see migrate_linkedin_engagement.py) -- blank on any row from a
-# source that doesn't have them, which the app treats as "not measured".
+# row. ENGAGEMENT_COLUMNS (LinkedIn Page metrics) and CRYSTALBALL_COLUMNS
+# (Crystal Ball firmographics/intent data) are both optional company-level
+# blocks -- blank on any row from a source that doesn't have them, which
+# the app treats as "not measured" rather than "measured, zero/blank".
+#
+# This list drifted out of sync once already when Tags and the Crystal
+# Ball columns were added to the app's own TEMPLATE_COLUMNS in index.html
+# without updating it here too -- write_output() below builds its
+# DataFrame with `columns=TEMPLATE_COLUMNS`, which silently DROPS any key
+# in a row dict that isn't in this list, rather than erroring. If a future
+# column gets added to index.html's TEMPLATE_COLUMNS, mirror it here too,
+# or a migrate_*.py script that maps to it will look like it worked while
+# quietly losing that data.
 ENGAGEMENT_COLUMNS = [
     "Engagement Level", "Organic Impressions", "Organic Engagements",
     "Paid Impressions", "Paid Clicks", "Paid Engagements", "Paid Video Views",
@@ -21,9 +31,17 @@ ENGAGEMENT_COLUMNS = [
     "Cost Per Qualified Lead",
 ]
 
+CRYSTALBALL_COLUMNS = [
+    "Domain", "Address", "Company Size", "Annual Revenue", "Industry",
+    "Country", "Solution", "Report Date", "Previous SuperScore", "SuperScore",
+    "SuperScore % Change", "Sub-solution", "Installed Technology", "Topics",
+    "Vendors",
+]
+
 TEMPLATE_COLUMNS = [
-    "Company", "Company LinkedIn", "Fase", "Bedrijfsnotities",
+    "Company", "Company LinkedIn", "Fase", "Bedrijfsnotities", "Tags",
     *ENGAGEMENT_COLUMNS,
+    *CRYSTALBALL_COLUMNS,
     "First Name", "Last Name", "Job Title", "Gender",
     "Email", "Email 2", "Mobile Phone", "Work Phone",
     "Beller", "Vervolg", "Vervolgdatum",

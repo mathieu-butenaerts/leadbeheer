@@ -1,0 +1,39 @@
+name: Daily Database Backup
+
+on:
+  schedule:
+    - cron: '0 3 * * *'   # 03:00 UTC daily (04:00/05:00 NL/BE depending on DST)
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  backup:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+
+      - name: Dependencies installeren
+        run: pip install pandas openpyxl requests
+
+      - name: Database exporteren
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+        run: python tools/export_database_snapshot.py backups/leadbeheer-export.xlsx
+
+      - name: Snapshot terugcommitten
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add backups/leadbeheer-export.xlsx
+          git diff --staged --quiet && echo "geen wijzigingen" && exit 0
+          git commit -m "Dagelijkse database-export $(date -u +%F)"
+          git pull --rebase --autostash
+          git push

@@ -49,6 +49,7 @@ already use its column names. For older exports with different headers,
 - `migrate_plaats_regio.py` — `Notities, Telefoon 1, Naam, Functie, Bedrijf, Plaats / regio, E-mail, Telefoon 2, LinkedIn`
 - `migrate_land.py` — `Comment, Telefoonnummer, Naam, Functie, Bedrijf, Land, Email, LinkedIn URL`
 - `migrate_native_format.py` — `Notities, Beller, Vervolg, Belaantekeningen, Mogelijk interessante hook, Id, First Name, Last Name, Gender, Email, Email 2, Mobile Phone, Work Phone, Company, Company LinkedIn, Job Function`
+- `migrate_rol_in_besluit.py` — `Notities, Naam, Functie, Bedrijf, Land, Telefoonnummer, Mobiel, E-mail, LinkedIn URL, Rol in besluit / opmerking`
 
 (The LinkedIn Company Page engagement export used to need `migrate_linkedin_engagement.py` too, but since that one gets re-uploaded often, it's now a button in the app itself — "LinkedIn-export importeren" — that takes the raw `.csv` directly. See [Engagement score](#engagement-score-from-linkedin-data) below. The script still exists in `tools/` if you'd rather convert it to the template shape and inspect it before importing.)
 
@@ -144,6 +145,32 @@ chart appears under "Crystal Ball" in its detail view. That history isn't
 preloaded for every company up front (unlike contacts/tags) — it's fetched
 only for whichever company you expand, since it's drill-down detail, not
 something the list view or filters need.
+
+## Daily database backup
+
+[`.github/workflows/daily-backup.yml`](.github/workflows/daily-backup.yml)
+runs `tools/export_database_snapshot.py` every day at 03:00 UTC (and
+on-demand via Actions > Daily Database Backup > Run workflow), pulling
+every company, contact, and tag straight from Supabase — not a copy of
+whatever's in a browser tab — and committing the result to
+`backups/leadbeheer-export.xlsx`. Same template shape the app itself
+imports/exports, so this file is a real backup: re-importable through
+"Importeren" if it's ever needed, not just something to look at. The file
+is overwritten each run (not dated/accumulated), so its git history *is*
+its backup history — `git log -- backups/leadbeheer-export.xlsx` to see
+every day's snapshot, checkout any past commit to recover one.
+
+One-time setup: add two **repository** secrets (Settings > Secrets and
+variables > Actions > New repository secret — not the same place the
+Supabase CLI's `secrets set` command manages, those are Supabase-side, not
+GitHub's):
+- `SUPABASE_URL` — same project URL as in `auth.js`.
+- `SUPABASE_SERVICE_ROLE_KEY` — Supabase dashboard > Project Settings >
+  API > `service_role` key (**not** the `anon` key `auth.js` uses). This
+  key bypasses row-level security entirely, which is what lets a scheduled
+  job with nobody "logged in" still read every row — keep it out of the
+  app/browser and out of this repo; it only ever belongs in this one
+  GitHub secret.
 
 ## Bulk-editing companies
 
