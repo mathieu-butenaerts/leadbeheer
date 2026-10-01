@@ -134,13 +134,14 @@ def build_rows(companies, contacts, tags, company_tags):
 
 
 def main():
+    import datetime
     supabase_url = os.environ.get("SUPABASE_URL")
     service_key = os.environ.get("SUPABASE_SERVICE_ROLE_KEY")
     if not supabase_url or not service_key:
         raise SystemExit("Set SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY first (see this script's docstring).")
 
-    default_out = Path(__file__).resolve().parent.parent / "backups" / "leadbeheer-export.xlsx"
-    out_path = Path(sys.argv[1]) if len(sys.argv) > 1 else default_out
+    default_out = Path(__file__).resolve().parent.parent / "backups" / f"leadbeheer-export-{datetime.date.today()}.xlsx"
+    out_path = default_out
     out_path.parent.mkdir(parents=True, exist_ok=True)
 
     headers = {"apikey": service_key, "Authorization": f"Bearer {service_key}"}
