@@ -25,7 +25,7 @@ jobs:
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
-        run: python tools/export_database_snapshot.py backups/leadbeheer-export.xlsx
+        run: python tools/export_database_snapshot.py
 
       - name: Snapshot terugcommitten
         run: |
