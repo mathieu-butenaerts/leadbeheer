@@ -50,6 +50,7 @@ already use its column names. For older exports with different headers,
 - `migrate_land.py` — `Comment, Telefoonnummer, Naam, Functie, Bedrijf, Land, Email, LinkedIn URL`
 - `migrate_native_format.py` — `Notities, Beller, Vervolg, Belaantekeningen, Mogelijk interessante hook, Id, First Name, Last Name, Gender, Email, Email 2, Mobile Phone, Work Phone, Company, Company LinkedIn, Job Function`
 - `migrate_rol_in_besluit.py` — `Notities, Naam, Functie, Bedrijf, Land, Telefoonnummer, Mobiel, E-mail, LinkedIn URL, Rol in besluit / opmerking`
+- `migrate_sequence_export.py` — an outreach/sequencing tool's export: `Notities, Naam, Id, Check op eerdere campagne, First Name, Last Name, Gender, Email, Email 2, Mobile Phone, Work Phone, Occupation, Title, Company, Company Size, Company Locality, Company Type, Company Industry, Company Founded At, Company Start Date, Region, Website, Active Sequences, Custom Field 1-150`
 
 (The LinkedIn Company Page engagement export used to need `migrate_linkedin_engagement.py` too, but since that one gets re-uploaded often, it's now a button in the app itself — "LinkedIn-export importeren" — that takes the raw `.csv` directly. See [Engagement score](#engagement-score-from-linkedin-data) below. The script still exists in `tools/` if you'd rather convert it to the template shape and inspect it before importing.)
 
