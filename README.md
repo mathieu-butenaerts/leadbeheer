@@ -215,6 +215,15 @@ case-insensitively or creating it, same as adding one by hand on a
 company's Tags field — and are batched through the same `bulkSequential()`
 helper as everything else in an import.
 
+### Long tag names, renaming
+
+Tags are shortened with `…` in the table (18 characters) and in the
+company panel and tag list (30); hover a tag for its full name. To change a
+name, click the pencil on its pill in the **Tags** section above the table
+— it renames the tag in place, so every company that has it keeps it, and
+its colour and any active filter carry over (no need to create a new tag and
+re-tag companies). A name that already exists (ignoring case) is refused.
+
 ## Lusha lookups
 
 A magnifying-glass button on a contact card, and an "Opzoeken via Lusha"

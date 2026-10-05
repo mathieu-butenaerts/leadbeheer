@@ -125,7 +125,10 @@
   /* ---- tags ---- */
   .tag-chip-row{ display:flex; flex-wrap:wrap; gap:5px; align-items:center; }
   .tag-chip{ display:inline-flex; align-items:center; gap:5px; border:1px solid; border-radius:999px;
-    padding:2px 4px 2px 9px; font-size:10.5px; font-weight:600; white-space:nowrap; }
+    padding:2px 4px 2px 9px; font-size:10.5px; font-weight:600; white-space:nowrap; max-width:100%; min-width:0; }
+  .tag-chip .tag-text{ overflow:hidden; text-overflow:ellipsis; min-width:0; }
+  .tag-chip-row{ min-width:0; }
+  .company-name-cell .tag-chip-row{ flex:1 1 0; min-width:120px; }
   .tag-chip .tag-remove{ border:none; background:none; cursor:pointer; color:inherit; opacity:.7;
     font-size:13px; line-height:1; padding:0 4px; }
   .tag-chip .tag-remove:hover{ opacity:1; }
@@ -139,10 +142,13 @@
   .tag-pill{ display:inline-flex; align-items:center; gap:7px; border:1px solid; border-radius:999px;
     padding:6px 6px 6px 13px; font-size:12px; font-weight:700; cursor:pointer; background:none; }
   .tag-pill .cnt{ opacity:.8; font-variant-numeric:tabular-nums; }
-  .tag-pill .tag-pill-remove{ border:none; background:rgba(0,0,0,0.18); color:inherit; border-radius:50%;
+  .tag-pill{ max-width:100%; }
+  .tag-pill .tag-pill-text{ overflow:hidden; text-overflow:ellipsis; white-space:nowrap; min-width:0; }
+  .tag-pill .tag-pill-remove, .tag-pill .tag-pill-edit{ border:none; background:rgba(0,0,0,0.18); color:inherit; border-radius:50%;
     width:16px; height:16px; display:inline-flex; align-items:center; justify-content:center; cursor:pointer;
-    font-size:11px; line-height:1; padding:0; }
-  .tag-pill .tag-pill-remove:hover{ background:rgba(0,0,0,0.32); }
+    font-size:11px; line-height:1; padding:0; flex:none; }
+  .tag-pill .tag-pill-remove:hover, .tag-pill .tag-pill-edit:hover{ background:rgba(0,0,0,0.32); }
+  .tag-pill .tag-pill-edit{ margin-left:-3px; }
   .tag-mode-row{ display:flex; gap:6px; margin-top:12px; padding-top:12px; border-top:1px solid var(--border); }
   .mode-btn{ font-size:11.5px; font-weight:600; padding:6px 12px; border-radius:999px; cursor:pointer;
     background:rgba(255,255,255,0.04); color:var(--muted); border:1px solid rgba(255,255,255,0.1); }
@@ -191,7 +197,7 @@
   .chev{ width:9px; height:9px; display:inline-flex; transition:transform .15s ease; color:var(--dim); }
   tr.open .chev{ transform:rotate(90deg); color:var(--blauw); }
   .company-name-cell{ display:flex; align-items:center; gap:10px; min-width:0; }
-  .company-name{ font-weight:600; color:var(--text); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width:280px; }
+  .company-name{ font-weight:600; color:var(--text); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width:280px; flex:none; }
   .li-link{ color:var(--dim); display:inline-flex; flex:none; }
   .li-link:hover{ color:var(--blauw); }
   .contact-count-cell{ color:var(--muted); }
@@ -604,11 +610,19 @@
       var style = active
         ? "background:" + color + ";color:#0b1210;border-color:" + color
         : "background:" + color + "1a;color:" + color + ";border-color:" + color + "66";
-      return '<span class="tag-pill" data-tag-pill="' + t.id + '" style="' + style + '">' +
-        esc(t.name) + ' <span class="cnt">' + (counts[t.id] || 0) + '</span>' +
+      return '<span class="tag-pill" data-tag-pill="' + t.id + '" title="' + esc(t.name) + '" style="' + style + '">' +
+        '<span class="tag-pill-text">' + esc(shortTagName(t.name, MAX_TAG_CHARS_PANEL)) + '</span> <span class="cnt">' + (counts[t.id] || 0) + '</span>' +
+        '<button type="button" class="tag-pill-edit" data-tag-edit="' + t.id + '" title="Naam van tag wijzigen"><svg width="10" height="10" viewBox="0 0 15 15" fill="none"><path d="M11.5 2.5L12.5 3.5L4.5 11.5L2 12L2.5 9.5L10.5 1.5L11.5 2.5Z" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/></svg></button>' +
         '<button type="button" class="tag-pill-remove" data-tag-delete="' + t.id + '" title="Tag volledig verwijderen">×</button>' +
         '</span>';
     }).join("");
+    Array.prototype.forEach.call(root.querySelectorAll("[data-tag-edit]"), function (el) {
+      el.addEventListener("click", function (e) {
+        e.stopPropagation(); // don't also toggle the pill's filter
+        var tag = tagById(el.getAttribute("data-tag-edit"));
+        if (tag) openRenameTagModal(tag);
+      });
+    });
     Array.prototype.forEach.call(root.querySelectorAll("[data-tag-pill]"), function (el) {
       el.addEventListener("click", function () {
         var id = el.getAttribute("data-tag-pill");
@@ -634,14 +648,26 @@
     }).join("");
   }
 
+  // Long tag names (several are whole sentences) used to push the table
+  // wider than its container, shoving other content off-screen. Cut them
+  // for display; the full name stays in the tooltip and in the tag panel's
+  // rename dialog.
+  var MAX_TAG_CHARS_ROW = 18;
+  var MAX_TAG_CHARS_DETAIL = 30;
+  var MAX_TAG_CHARS_PANEL = 30;
+  function shortTagName(name, max) {
+    name = String(name == null ? "" : name);
+    return name.length > max ? name.slice(0, max - 1).trimEnd() + "…" : name;
+  }
+
   function renderTagChip(tag, opts) {
     opts = opts || {};
     var color = tagColor(tag.id);
     var remove = opts.removable
       ? '<button type="button" class="tag-remove" data-remove-tag="' + tag.id + '" title="Tag verwijderen">×</button>'
       : "";
-    return '<span class="tag-chip" style="background:' + color + '22;color:' + color + ';border-color:' + color + '66">' +
-      esc(tag.name) + remove + '</span>';
+    return '<span class="tag-chip" title="' + esc(tag.name) + '" style="background:' + color + '22;color:' + color + ';border-color:' + color + '66">' +
+      '<span class="tag-text">' + esc(shortTagName(tag.name, opts.max || MAX_TAG_CHARS_ROW)) + '</span>' + remove + '</span>';
   }
 
   function formatDate(iso) {
@@ -1007,7 +1033,7 @@
   function renderCompanyTags(companyId) {
     var tags = (state.companyTagIds[companyId] || []).map(tagById).filter(Boolean);
     if (!tags.length) return '<span class="no-tags">Nog geen tags</span>';
-    return tags.map(function (t) { return renderTagChip(t, { removable: true }); }).join("");
+    return tags.map(function (t) { return renderTagChip(t, { removable: true, max: MAX_TAG_CHARS_DETAIL }); }).join("");
   }
 
   function renderCompanyDetail(c) {
@@ -1489,6 +1515,47 @@
       if (idx !== -1) state.tagFilters.splice(idx, 1);
       toast("Tag verwijderd");
     });
+  }
+
+  // Renames in place: the tag row keeps its id, so every company that has
+  // it, its colour (derived from the id) and any active filter carry over
+  // untouched — no need to create a new tag and re-tag companies.
+  function renameTag(tagId, rawName) {
+    var name = (rawName || "").trim();
+    if (!name) { toast("Geef een naam op"); return; }
+    var clash = state.tags.some(function (t) { return t.id !== tagId && t.name.toLowerCase() === name.toLowerCase(); });
+    if (clash) { toast('Er bestaat al een tag "' + name + '"'); return; }
+    supabase.from("tags").update({ name: name }).eq("id", tagId).then(function (res) {
+      if (res.error) {
+        console.error(res.error);
+        toast(res.error.code === "23505" ? 'Er bestaat al een tag "' + name + '"' : "Hernoemen mislukt");
+        return;
+      }
+      var tag = tagById(tagId);
+      if (tag) tag.name = name; // realtime will confirm; this just avoids a stale label until it arrives
+      toast("Tag hernoemd");
+      closeModal();
+      render();
+    });
+  }
+
+  function openRenameTagModal(tag) {
+    var html = '';
+    html += '<div class="modal-overlay" id="overlay">';
+    html += '  <div class="modal">';
+    html += '    <h2>Tag hernoemen</h2>';
+    html += '    <div class="form-field full"><label>Naam van de tag</label><input type="text" id="f-tag-name" value="' + esc(tag.name) + '" autocomplete="off"></div>';
+    html += '    <div class="save-hint">Alle bedrijven die deze tag hebben behouden hem onder de nieuwe naam.</div>';
+    html += '    <div class="modal-actions"><button class="btn btn-quiet" id="modal-cancel">Annuleren</button><button class="btn" id="modal-save">Opslaan</button></div>';
+    html += '  </div>';
+    html += '</div>';
+    $("#modal-root").innerHTML = html;
+    $("#overlay").addEventListener("click", function (e) { if (e.target.id === "overlay") closeModal(); });
+    $("#modal-cancel").addEventListener("click", closeModal);
+    $("#modal-save").addEventListener("click", function () { renameTag(tag.id, $("#f-tag-name").value); });
+    $("#f-tag-name").addEventListener("keydown", function (e) { if (e.key === "Enter") $("#modal-save").click(); });
+    $("#f-tag-name").focus();
+    $("#f-tag-name").select();
   }
 
   // ---------- modals ----------
