@@ -139,6 +139,15 @@ begin
     update public.companies set contact_count = greatest(0, contact_count - 1), updated_at = now()
       where id = old.company_id;
     return old;
+  elsif (tg_op = 'UPDATE') then
+    -- A contact moved to another company (the "verplaatsen" button).
+    if new.company_id is distinct from old.company_id then
+      update public.companies set contact_count = greatest(0, contact_count - 1), updated_at = now()
+        where id = old.company_id;
+      update public.companies set contact_count = contact_count + 1, updated_at = now()
+        where id = new.company_id;
+    end if;
+    return new;
   end if;
   return null;
 end;
@@ -150,6 +159,10 @@ create trigger trg_contacts_count_ins after insert on public.contacts
 
 drop trigger if exists trg_contacts_count_del on public.contacts;
 create trigger trg_contacts_count_del after delete on public.contacts
+  for each row execute function public.leads_sync_contact_count();
+
+drop trigger if exists trg_contacts_count_upd on public.contacts;
+create trigger trg_contacts_count_upd after update of company_id on public.contacts
   for each row execute function public.leads_sync_contact_count();
 
 -- Row-level security: any signed-in (authenticated) user can read and write.

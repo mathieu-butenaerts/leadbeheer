@@ -205,7 +205,7 @@
   tr.detail td{ background:var(--bg2); border-bottom:1px solid var(--border); padding:0; }
   .detail-inner{ padding:18px 20px; display:grid; grid-template-columns:270px minmax(0,1fr); gap:22px; }
   .detail-inner > *{ min-width:0; }
-  @media (max-width:800px){ .detail-inner{ grid-template-columns:1fr; } }
+  @media (max-width:800px){ .detail-inner{ grid-template-columns:minmax(0,1fr); } }
 
   .field-label{ font-size:10.5px; font-weight:700; text-transform:uppercase; letter-spacing:.05em; color:var(--dim); margin-bottom:6px; display:block; }
   .meta-col{ display:flex; flex-direction:column; gap:16px; }
@@ -1132,6 +1132,7 @@
     html += '    </div>';
     html += '    <div class="contact-actions">';
     html += '      <button class="icon-btn lusha" data-lusha-contact="' + companyId + '|' + p.id + '" title="Opzoeken via Lusha"><svg width="14" height="14" viewBox="0 0 15 15" fill="none"><circle cx="6.5" cy="6.5" r="4.5" stroke="currentColor" stroke-width="1.2"/><path d="M13 13L10 10" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/></svg></button>';
+    html += '      <button class="icon-btn" data-move-contact="' + companyId + '|' + p.id + '" title="Verplaatsen naar ander bedrijf"><svg width="14" height="14" viewBox="0 0 15 15" fill="none"><path d="M2 7.5H12M12 7.5L8.5 4M12 7.5L8.5 11" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/></svg></button>';
     html += '      <button class="icon-btn" data-edit-contact="' + companyId + '|' + p.id + '" title="Bewerken"><svg width="14" height="14" viewBox="0 0 15 15" fill="none"><path d="M11.5 2.5L12.5 3.5L4.5 11.5L2 12L2.5 9.5L10.5 1.5L11.5 2.5Z" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/></svg></button>';
     html += '      <button class="icon-btn danger" data-delete-contact="' + companyId + '|' + p.id + '" title="Verwijderen"><svg width="14" height="14" viewBox="0 0 15 15" fill="none"><path d="M2.5 4H12.5M5.5 4V2.8C5.5 2.3 5.9 2 6.3 2H8.7C9.1 2 9.5 2.3 9.5 2.8V4M6 6.5V11M9 6.5V11M3.5 4L4 12C4 12.5 4.4 13 5 13H10C10.6 13 11 12.5 11 12L11.5 4" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/></svg></button>';
     html += '    </div>';
@@ -1206,6 +1207,13 @@
         var parts = el.getAttribute("data-edit-contact").split("|");
         var contact = (state.contactsByCompany[parts[0]] || []).find(function (p) { return p.id === parts[1]; });
         openContactModal(parts[0], contact || null);
+      });
+    });
+    Array.prototype.forEach.call(root.querySelectorAll("[data-move-contact]"), function (el) {
+      el.addEventListener("click", function () {
+        var parts = el.getAttribute("data-move-contact").split("|");
+        var contact = (state.contactsByCompany[parts[0]] || []).find(function (p) { return p.id === parts[1]; });
+        if (contact) openMoveContactModal(parts[0], contact);
       });
     });
     Array.prototype.forEach.call(root.querySelectorAll("[data-lusha-contact]"), function (el) {
@@ -1319,6 +1327,14 @@
     }
     var rec = payload.new;
     if (!rec) return;
+    // A contact moved to another company (UPDATE of company_id) must leave
+    // its previous company's list, or it would show under both until reload.
+    Object.keys(state.contactsByCompany).forEach(function (companyId) {
+      if (companyId === rec.company_id) return;
+      var other = state.contactsByCompany[companyId];
+      var at = other.findIndex(function (p) { return p.id === rec.id; });
+      if (at >= 0) other.splice(at, 1);
+    });
     var list = state.contactsByCompany[rec.company_id] || [];
     var idx = list.findIndex(function (p) { return p.id === rec.id; });
     if (idx >= 0) {
@@ -1353,6 +1369,87 @@
     supabase.from("contacts").delete().eq("id", contactId).then(function (res) {
       if (res.error) { console.error(res.error); toast("Verwijderen mislukt"); return; }
       toast("Contactpersoon verwijderd");
+    });
+  }
+
+  // The contacts trigger in schema.sql keeps contact_count right for a
+  // moved contact too, but set the exact numbers here as well so counts are
+  // correct even if that trigger update hasn't been run yet. Absolute
+  // counts (not +1/-1), so doing both can't drift.
+  function refreshContactCounts(companyIds) {
+    companyIds.forEach(function (id) {
+      supabase.from("contacts").select("id", { count: "exact", head: true }).eq("company_id", id).then(function (res) {
+        if (res.error || res.count == null) return;
+        updateCompany(id, { contact_count: res.count });
+      });
+    });
+  }
+
+  function moveContact(fromCompanyId, contact, toCompanyId) {
+    var target = state.companies.find(function (c) { return c.id === toCompanyId; });
+    if (!target) { toast("Kies een bedrijf"); return; }
+    var key = normalizePersonName(contact.first_name, contact.last_name);
+    var email = (contact.email || "").trim().toLowerCase();
+    var clash = (state.contactsByCompany[toCompanyId] || []).some(function (p) {
+      return (email && (p.email || "").trim().toLowerCase() === email) ||
+        (key && normalizePersonName(p.first_name, p.last_name) === key);
+    });
+    if (clash && !confirm("Bij " + target.name + " staat al een contactpersoon met dezelfde naam of hetzelfde e-mailadres. Toch verplaatsen?")) return;
+
+    supabase.from("contacts").update({ company_id: toCompanyId }).eq("id", contact.id).then(function (res) {
+      if (res.error) { console.error(res.error); toast("Verplaatsen mislukt"); return; }
+      refreshContactCounts([fromCompanyId, toCompanyId]);
+      toast("Verplaatst naar " + target.name);
+      closeModal();
+    });
+  }
+
+  function openMoveContactModal(companyId, contact) {
+    var current = state.companies.find(function (c) { return c.id === companyId; });
+    var personName = ((contact.first_name || "") + " " + (contact.last_name || "")).trim() || "(naam onbekend)";
+    var targets = state.companies.filter(function (c) { return c.id !== companyId; })
+      .sort(function (a, b) { return (a.name || "").localeCompare(b.name || ""); });
+    // Start with the first meaningful word of the current company's name in
+    // the search box — the usual reason to move a contact is that the same
+    // company exists twice, so the likely target is right there.
+    var firstWord = (normalizeName(current ? current.name : "").split(" ").filter(function (w) { return w.length >= 3; })[0]) || "";
+    var MAX_OPTIONS = 200;
+
+    var html = '';
+    html += '<div class="modal-overlay" id="overlay">';
+    html += '  <div class="modal">';
+    html += '    <h2>Contactpersoon verplaatsen</h2>';
+    html += '    <div style="font-size:13px;color:var(--sub);"><b>' + esc(personName) + '</b> staat nu bij <b>' + esc(current ? current.name : "?") + '</b>. Kies het bedrijf waar deze contactpersoon naartoe moet.</div>';
+    html += '    <div class="form-field full"><label>Zoek bedrijf</label><input type="text" id="f-move-filter" value="' + esc(firstWord) + '" autocomplete="off"></div>';
+    html += '    <div class="form-field full"><select id="f-move-target" size="8"></select><div class="save-hint" id="f-move-hint"></div></div>';
+    html += '    <div class="modal-actions"><button class="btn btn-quiet" id="modal-cancel">Annuleren</button><button class="btn" id="modal-save">Verplaatsen</button></div>';
+    html += '  </div>';
+    html += '</div>';
+    $("#modal-root").innerHTML = html;
+
+    function renderOptions() {
+      var q = $("#f-move-filter").value.trim().toLowerCase();
+      var matches = q ? targets.filter(function (c) { return (c.name || "").toLowerCase().indexOf(q) !== -1; }) : targets;
+      var shown = matches.slice(0, MAX_OPTIONS);
+      $("#f-move-target").innerHTML = shown.map(function (c) {
+        return '<option value="' + esc(c.id) + '">' + esc(c.name) + ' (' + (c.contact_count || 0) + ')</option>';
+      }).join("");
+      $("#f-move-hint").textContent = !matches.length ? "Geen bedrijven gevonden."
+        : (matches.length > shown.length ? "Eerste " + shown.length + " van " + matches.length + " — typ om te verfijnen." : matches.length + (matches.length === 1 ? " bedrijf" : " bedrijven"));
+      if (shown.length === 1) $("#f-move-target").selectedIndex = 0;
+    }
+    renderOptions();
+    $("#f-move-filter").addEventListener("input", renderOptions);
+    $("#f-move-filter").focus();
+    $("#f-move-filter").select();
+
+    $("#overlay").addEventListener("click", function (e) { if (e.target.id === "overlay") closeModal(); });
+    $("#modal-cancel").addEventListener("click", closeModal);
+    $("#f-move-target").addEventListener("dblclick", function () { $("#modal-save").click(); });
+    $("#modal-save").addEventListener("click", function () {
+      var toId = $("#f-move-target").value;
+      if (!toId) { toast("Kies eerst een bedrijf in de lijst"); return; }
+      moveContact(companyId, contact, toId);
     });
   }
 
