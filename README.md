@@ -69,7 +69,16 @@ python tools/migrate_plaats_regio.py path/to/export.xlsx
 
 Then upload the `_migrated.xlsx` file it produces via "Importeren" in the
 app, same as any other file — that step already checks for duplicates before
-writing anything.
+writing anything. Companies match on name ignoring case, spacing, dots and a
+trailing legal form (`Acme BV` = `Acme B.V.` = `Acme`); a contact counts as
+already present when its e-mail or its first+last name matches one at that
+company (or an earlier row of the same file). The confirm button locks while
+an import runs, so a double click can't import everything twice.
+
+Duplicates that already got into the database are cleaned up by
+[`supabase/merge_duplicate_companies.sql`](supabase/merge_duplicate_companies.sql)
+(merges duplicate companies, then duplicate contacts; the preview query at
+the top of the file shows what it would merge).
 
 ## Engagement score (from LinkedIn data)
 

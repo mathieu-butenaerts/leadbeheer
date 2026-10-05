@@ -203,7 +203,8 @@
     background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='8' height='8' viewBox='0 0 8 8'%3E%3Cpath d='M1 3L4 6L7 3' stroke='%238ea2b8' stroke-width='1.3' fill='none' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E"); }
 
   tr.detail td{ background:var(--bg2); border-bottom:1px solid var(--border); padding:0; }
-  .detail-inner{ padding:18px 20px; display:grid; grid-template-columns:270px 1fr; gap:22px; }
+  .detail-inner{ padding:18px 20px; display:grid; grid-template-columns:270px minmax(0,1fr); gap:22px; }
+  .detail-inner > *{ min-width:0; }
   @media (max-width:800px){ .detail-inner{ grid-template-columns:1fr; } }
 
   .field-label{ font-size:10.5px; font-weight:700; text-transform:uppercase; letter-spacing:.05em; color:var(--dim); margin-bottom:6px; display:block; }
@@ -225,10 +226,14 @@
   .contact-role{ font-size:11.5px; color:var(--dim); margin-top:1px; }
   .contact-actions{ display:flex; gap:2px; }
 
-  .contact-grid{ display:grid; grid-template-columns:repeat(2,1fr); gap:8px 18px; font-size:12.5px; }
-  @media (max-width:520px){ .contact-grid{ grid-template-columns:1fr; } }
+  .contact-grid{ display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:8px 18px; font-size:12.5px; }
+  @media (max-width:520px){ .contact-grid{ grid-template-columns:minmax(0,1fr); } }
+  .cf{ min-width:0; }
   .cf .k{ color:var(--dim); font-size:10px; text-transform:uppercase; letter-spacing:.04em; }
-  .cf .v{ color:var(--sub); word-break:break-word; }
+  .cf .v{ color:var(--sub); overflow-wrap:anywhere; }
+  .contact-card, .contact-head > div:first-child{ min-width:0; }
+  .contact-name, .contact-role{ overflow-wrap:anywhere; }
+  .notes-grid > div{ min-width:0; overflow-wrap:anywhere; }
   .cf .v.empty-val{ color:var(--dim); font-style:italic; }
   .cf a.v{ color:var(--sub); text-decoration:none; }
   .cf a.v:hover{ color:var(--blauw); text-decoration:underline; }
@@ -509,8 +514,19 @@
   // carry a non-breaking space, a decomposed accent, or doubled spaces that
   // look identical on screen but fail a plain === match, silently creating
   // a duplicate company instead of matching the existing one.
+  //
+  // Also ignores dots/commas and a trailing legal form (BV, B.V., NV, BVBA,
+  // GmbH, Ltd, ...), so "Acme BV", "Acme B.V." and "Acme" are one company
+  // instead of three near-identical ones. Falls back to the plain form if
+  // stripping would leave nothing.
+  var LEGAL_FORM_SUFFIX = /\s+(bv|nv|bvba|cvba|sprl|srl|vof|cv|gmbh|ag|ltd|llc|inc|sa|sas)$/;
   function normalizeName(s) {
-    return String(s == null ? "" : s).normalize("NFC").replace(/\s+/g, " ").trim().toLowerCase();
+    var plain = String(s == null ? "" : s).normalize("NFC").replace(/\s+/g, " ").trim().toLowerCase();
+    var loose = plain.replace(/[.,]/g, "").replace(/\s+/g, " ").trim().replace(LEGAL_FORM_SUFFIX, "").trim();
+    return loose || plain;
+  }
+  function normalizePersonName(first, last) {
+    return (String(first || "") + " " + String(last || "")).normalize("NFC").replace(/\s+/g, " ").trim().toLowerCase();
   }
   function toast(msg) {
     var el = $("#toast");
@@ -1976,7 +1992,7 @@
       var keys = {};
       state.contactsByCompany[companyId].forEach(function (p) {
         var email = (p.email || "").trim().toLowerCase();
-        var nameKey = ((p.first_name || "") + " " + (p.last_name || "")).trim().toLowerCase();
+        var nameKey = normalizePersonName(p.first_name, p.last_name);
         if (email) keys["email:" + email] = true;
         if (nameKey) keys["name:" + nameKey] = true;
       });
@@ -2032,15 +2048,17 @@
         hook: val(row, "Mogelijk interessante hook")
       };
 
-      var emailKey = contact.email ? "email:" + contact.email.toLowerCase() : "";
-      var nameKey = "name:" + (firstName + " " + lastName).trim().toLowerCase();
+      var emailKey = contact.email ? "email:" + contact.email.trim().toLowerCase() : "";
+      var nameKey = "name:" + normalizePersonName(firstName, lastName);
       var existingKeys = g.existing ? (existingContactKeys[g.existing.id] || {}) : {};
       var isDuplicate = !!((emailKey && existingKeys[emailKey]) || existingKeys[nameKey]);
-      if (!isDuplicate) {
-        var seenKey = emailKey || nameKey;
-        if (g.seenKeys[seenKey]) isDuplicate = true;
-        g.seenKeys[seenKey] = true;
-      }
+      // Same rule against earlier rows of this file: a match on EITHER the
+      // email or the name counts, and both keys get recorded, so a row with
+      // an email followed by the same person without one (or the reverse)
+      // is still caught.
+      if (!isDuplicate && ((emailKey && g.seenKeys[emailKey]) || g.seenKeys[nameKey])) isDuplicate = true;
+      if (emailKey) g.seenKeys[emailKey] = true;
+      g.seenKeys[nameKey] = true;
 
       g.contacts.push({ data: contact, duplicate: isDuplicate, include: !isDuplicate });
     });
@@ -2183,6 +2201,14 @@
   }
 
   function runImport(groups, tagName) {
+    // The modal stays open while the batches run one after another, so a
+    // second click on "Importeren bevestigen" would start a whole second
+    // import of the same rows — every company and contact inserted twice.
+    if (runImport.busy) return;
+    runImport.busy = true;
+    var saveBtn = $("#modal-save");
+    if (saveBtn) { saveBtn.disabled = true; saveBtn.textContent = "Bezig met importeren…"; }
+
     var toCreate = groups.filter(function (g) { return !g.existing; });
     var createPayload = toCreate.map(function (g) {
       return Object.assign({ name: g.name, linkedin: g.linkedin, stage: g.stage || "nieuw", notes: g.notes }, enrichmentPatch(g));
@@ -2345,10 +2371,13 @@
         if (taggedCount) parts.push('tag "' + tagName + '" toegepast op ' + taggedCount + (taggedCount === 1 ? " bedrijf" : " bedrijven"));
         if (perRowTagCount) parts.push(perRowTagCount + " tag" + (perRowTagCount === 1 ? "" : "s") + " uit sjabloon toegepast");
         toast(parts.length ? "Import voltooid: " + parts.join(", ") : "Import voltooid — geen wijzigingen nodig");
+        runImport.busy = false;
         closeModal();
       });
     }).catch(function (err) {
       console.error(err);
+      runImport.busy = false;
+      if (saveBtn) { saveBtn.disabled = false; saveBtn.textContent = "Importeren bevestigen"; }
       toast(err.message || "Import mislukt");
     });
   }
