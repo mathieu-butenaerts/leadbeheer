@@ -193,6 +193,20 @@ request per row). Selection persists across filter/search changes and only
 clears when you click "Selectie wissen," act on it, or a selected company is
 deleted (by you or anyone else — cleaned up automatically either way).
 
+### Merging two companies
+
+Tick exactly two companies and click **Samenvoegen…** (greyed out for any
+other number). The dialog lists name, LinkedIn, Fase and notes with a choice
+per field, plus any other field (Crystal Ball / LinkedIn data) where the two
+disagree; a field only one of them has is simply filled in. Notes also offer
+"Beide samenvoegen" (both texts under each other, the default). Contacts,
+tags and SuperScore history of both end up on the one company that remains;
+contacts that look like duplicates (same e-mail, or same name without a
+conflicting e-mail) are skipped unless you untick that box. The second
+company is deleted only as the very last step, after everything has been
+copied, so an error halfway leaves it intact and the merge can simply be
+run again.
+
 ## Tagging on import
 
 Two ways an import can set tags, usable together:

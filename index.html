@@ -275,6 +275,24 @@
   .modal-actions{ display:flex; justify-content:flex-end; gap:8px; margin-top:4px; }
 
   .modal.wide{ max-width:720px; }
+  .modal.merge{ max-width:900px; }
+  .merge-head, .merge-row{ display:grid; grid-template-columns:130px minmax(0,1fr) minmax(0,1fr); gap:8px 12px; align-items:start; }
+  .merge-head{ font-size:11px; font-weight:700; color:var(--muted); text-transform:uppercase; letter-spacing:.04em; padding-bottom:6px; border-bottom:1px solid var(--border); }
+  .merge-head span{ overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .merge-rows{ display:flex; flex-direction:column; gap:10px; }
+  .merge-row{ padding-bottom:10px; border-bottom:1px solid rgba(255,255,255,0.05); font-size:12.5px; }
+  .merge-label{ color:var(--muted); font-weight:600; font-size:12px; padding-top:6px; }
+  .merge-opt{ display:flex; gap:8px; align-items:flex-start; border:1px solid var(--border); border-radius:8px; padding:7px 9px;
+    cursor:pointer; background:var(--bg2); min-width:0; }
+  .merge-opt:has(input:checked){ border-color:rgba(25,157,217,0.6); background:rgba(25,157,217,0.10); }
+  .merge-opt input{ margin-top:2px; flex:none; }
+  .merge-val{ min-width:0; overflow-wrap:anywhere; white-space:pre-wrap; max-height:96px; overflow-y:auto; color:var(--text); }
+  .merge-both{ grid-column:2 / 4; }
+  .merge-same{ grid-column:2 / 4; color:var(--sub); padding-top:6px; overflow-wrap:anywhere; }
+  .merge-same i{ color:var(--dim); font-size:11.5px; }
+  .merge-note{ font-size:12px; color:var(--sub); background:rgba(255,255,255,0.03); border:1px solid var(--border); border-radius:8px; padding:9px 11px; }
+  .merge-note b{ color:var(--text); }
+  details.merge-more summary{ cursor:pointer; color:var(--muted); font-size:12px; font-weight:600; margin:2px 0 10px; }
   .import-summary{ display:flex; flex-wrap:wrap; gap:10px 20px; font-size:13px; }
   .import-summary b{ font-family:'Archivo',sans-serif; font-size:16px; }
   .import-summary .ok b{ color:var(--stage-gewonnen); }
@@ -381,6 +399,8 @@
     <div class="bulk-bar-sep"></div>
     <input type="text" id="bulkBarTagInput" list="tag-options" placeholder="Tag toevoegen…">
     <button class="btn btn-quiet" id="bulkBarTagAdd">+ Toevoegen</button>
+    <div class="bulk-bar-sep"></div>
+    <button class="btn btn-quiet" id="bulkBarMerge">Samenvoegen…</button>
     <div class="bulk-bar-sep"></div>
     <button class="btn btn-quiet" id="bulkBarDelete" style="color:var(--magenta);border-color:var(--magenta);">Verwijderen</button>
   </div>
@@ -567,6 +587,9 @@
     var bar = $("#bulkBar");
     bar.style.display = selectedCount ? "flex" : "none";
     $("#bulkBarCount").textContent = selectedCount + " geselecteerd";
+    var mergeBtn = $("#bulkBarMerge");
+    mergeBtn.disabled = selectedCount !== 2;
+    mergeBtn.title = selectedCount === 2 ? "Deze twee bedrijven samenvoegen" : "Selecteer precies twee bedrijven om samen te voegen";
 
     var visible = filteredCompanies();
     var visibleSelected = visible.filter(function (c) { return state.selectedIds[c.id]; }).length;
@@ -2546,6 +2569,193 @@
     });
   }
 
+  // ---------- merging two companies ----------
+
+  var MERGE_MAIN_FIELDS = [
+    { key: "name", label: "Naam", type: "text" },
+    { key: "linkedin", label: "Company LinkedIn", type: "text" },
+    { key: "stage", label: "Fase", type: "stage" },
+    { key: "notes", label: "Bedrijfsnotities", type: "notes" }
+  ];
+  var MERGE_EXTRA_FIELDS = ENRICHMENT_FIELDS.map(function (f) { return { key: f[1], label: f[0], type: f[2] }; });
+
+  function mergeIsEmpty(v) { return v == null || v === ""; }
+  function mergeDisplay(field, v) {
+    if (mergeIsEmpty(v)) return "—";
+    if (field.type === "stage") return stageInfo(v).label;
+    if (field.type === "date") return formatDate(v);
+    return String(v);
+  }
+  function mergeConflict(a, b) { return !mergeIsEmpty(a) && !mergeIsEmpty(b) && String(a) !== String(b); }
+
+  // Same rule the SQL cleanup uses: a shared e-mail, or a shared name unless
+  // both people have different e-mail addresses.
+  function contactLooksDuplicate(p, others) {
+    var email = (p.email || "").trim().toLowerCase();
+    var name = normalizePersonName(p.first_name, p.last_name);
+    return others.some(function (o) {
+      var otherEmail = (o.email || "").trim().toLowerCase();
+      if (email && otherEmail && email === otherEmail) return true;
+      return !!name && name === normalizePersonName(o.first_name, o.last_name) && (!email || !otherEmail);
+    });
+  }
+
+  function openMergeCompaniesModal() {
+    var ids = Object.keys(state.selectedIds);
+    if (ids.length !== 2) { toast("Selecteer precies twee bedrijven om samen te voegen"); return; }
+    var pair = ids.map(function (id) { return state.companies.find(function (c) { return c.id === id; }); });
+    if (!pair[0] || !pair[1]) { toast("Bedrijf niet gevonden"); return; }
+    pair.sort(function (x, y) { return (x.name || "").localeCompare(y.name || ""); });
+    var A = pair[0], B = pair[1];
+
+    // The company with more contacts (older on a tie) is the one that
+    // stays; the other is emptied into it and removed. That only decides
+    // which database row survives — every visible value below is chosen
+    // field by field, whichever side it comes from.
+    var contactsA = state.contactsByCompany[A.id] || [], contactsB = state.contactsByCompany[B.id] || [];
+    var keeper = (contactsB.length > contactsA.length || (contactsB.length === contactsA.length && (B.created_at || "") < (A.created_at || ""))) ? B : A;
+    var loser = keeper === A ? B : A;
+    var keeperContacts = keeper === A ? contactsA : contactsB;
+    var loserContacts = keeper === A ? contactsB : contactsA;
+    var dupes = loserContacts.filter(function (p) { return contactLooksDuplicate(p, keeperContacts); });
+
+    var tagUnion = {};
+    (state.companyTagIds[A.id] || []).concat(state.companyTagIds[B.id] || []).forEach(function (t) { tagUnion[t] = true; });
+
+    function optionHtml(field, side, company) {
+      return '<label class="merge-opt"><input type="radio" name="mf-' + field.key + '" value="' + side + '"' +
+        (company === keeper && field.type !== "notes" ? " checked" : "") + '><span class="merge-val">' + esc(mergeDisplay(field, company[field.key])) + '</span></label>';
+    }
+    function rowHtml(field, alwaysShow) {
+      var a = A[field.key], b = B[field.key];
+      if (!mergeConflict(a, b)) {
+        if (!alwaysShow) return "";
+        var hint = mergeIsEmpty(a) && mergeIsEmpty(b) ? "leeg" : (mergeIsEmpty(a) ? "alleen bij B" : (mergeIsEmpty(b) ? "alleen bij A" : "gelijk"));
+        var shown = mergeIsEmpty(a) ? b : a;
+        return '<div class="merge-row"><div class="merge-label">' + esc(field.label) + '</div><div class="merge-same">' +
+          esc(mergeDisplay(field, shown)) + ' <i>(' + hint + ')</i></div></div>';
+      }
+      var html = '<div class="merge-row"><div class="merge-label">' + esc(field.label) + '</div>' + optionHtml(field, "a", A) + optionHtml(field, "b", B);
+      if (field.type === "notes") {
+        html += '<label class="merge-opt merge-both"><input type="radio" name="mf-' + field.key + '" value="both" checked><span class="merge-val">Beide samenvoegen (A en B onder elkaar)</span></label>';
+      }
+      return html + '</div>';
+    }
+
+    var extraRows = MERGE_EXTRA_FIELDS.map(function (f) { return rowHtml(f, false); }).filter(Boolean);
+
+    var html = '';
+    html += '<div class="modal-overlay" id="overlay">';
+    html += '  <div class="modal merge">';
+    html += '    <h2>Bedrijven samenvoegen</h2>';
+    html += '    <div class="merge-note">Kies per veld welke waarde blijft. Er blijft <b>één bedrijf</b> over met alle contactpersonen, tags en SuperScore-historie van beide. Dit kan niet ongedaan gemaakt worden.</div>';
+    html += '    <div class="merge-rows">';
+    html += '      <div class="merge-head"><span>Veld</span><span title="' + esc(A.name) + '">A · ' + esc(A.name) + ' (' + contactsA.length + ' contacten)</span><span title="' + esc(B.name) + '">B · ' + esc(B.name) + ' (' + contactsB.length + ' contacten)</span></div>';
+    MERGE_MAIN_FIELDS.forEach(function (f) { html += rowHtml(f, true); });
+    if (extraRows.length) {
+      html += '      <details class="merge-more"><summary>Overige velden met verschillen (' + extraRows.length + ')</summary><div class="merge-rows">' + extraRows.join("") + '</div></details>';
+    }
+    html += '    </div>';
+    html += '    <div class="merge-note">';
+    html += '      Contactpersonen: <b>' + loserContacts.length + '</b> van "' + esc(loser.name) + '" gaan naar "' + esc(keeper.name) + '". Tags worden samengevoegd (' + Object.keys(tagUnion).length + ').';
+    if (dupes.length) {
+      html += '      <div style="margin-top:8px"><label style="display:flex;gap:8px;align-items:center;cursor:pointer"><input type="checkbox" id="mf-drop-dupes" checked> ' +
+        dupes.length + (dupes.length === 1 ? " contactpersoon lijkt" : " contactpersonen lijken") + ' dubbel (zelfde e-mail of naam) — niet overnemen</label></div>';
+    }
+    html += '    </div>';
+    html += '    <div class="modal-actions"><button class="btn btn-quiet" id="modal-cancel">Annuleren</button><button class="btn" id="modal-save">Samenvoegen</button></div>';
+    html += '  </div>';
+    html += '</div>';
+    $("#modal-root").innerHTML = html;
+
+    function chosenValue(field) {
+      var a = A[field.key], b = B[field.key];
+      if (!mergeConflict(a, b)) return mergeIsEmpty(a) ? b : a;
+      var picked = document.querySelector('input[name="mf-' + field.key + '"]:checked');
+      var side = picked ? picked.value : (keeper === A ? "a" : "b");
+      if (side === "both") return String(a).trim() + "\n\n" + String(b).trim();
+      return side === "a" ? a : b;
+    }
+
+    $("#overlay").addEventListener("click", function (e) { if (e.target.id === "overlay") closeModal(); });
+    $("#modal-cancel").addEventListener("click", closeModal);
+    $("#modal-save").addEventListener("click", function () {
+      var patch = {};
+      MERGE_MAIN_FIELDS.concat(MERGE_EXTRA_FIELDS).forEach(function (f) {
+        var v = chosenValue(f);
+        if (mergeIsEmpty(v)) return;
+        if (String(v) !== String(keeper[f.key] == null ? "" : keeper[f.key])) patch[f.key] = v;
+      });
+      var dropBox = $("#mf-drop-dupes");
+      var dupeIds = dropBox && dropBox.checked ? dupes.map(function (p) { return p.id; }) : [];
+      runMerge(keeper, loser, patch, dupeIds);
+    });
+  }
+
+  // Nothing is deleted until everything has been copied over: if a step
+  // fails halfway the second company is still there, and running the merge
+  // again just continues (contacts already moved are no longer in it).
+  function runMerge(keeper, loser, patch, dupeIds) {
+    if (runMerge.busy) return;
+    runMerge.busy = true;
+    var saveBtn = $("#modal-save");
+    if (saveBtn) { saveBtn.disabled = true; saveBtn.textContent = "Bezig met samenvoegen…"; }
+    function must(res, msg) { if (res.error) throw new Error(msg + ": " + res.error.message); return res; }
+
+    Promise.resolve()
+      .then(function () {
+        if (!Object.keys(patch).length) return;
+        return supabase.from("companies").update(patch).eq("id", keeper.id).then(function (res) { must(res, "Gegevens bijwerken mislukt"); });
+      })
+      .then(function () {
+        if (!dupeIds.length) return;
+        return supabase.from("contacts").delete().in("id", dupeIds).then(function (res) { must(res, "Dubbele contactpersonen verwijderen mislukt"); });
+      })
+      .then(function () {
+        return supabase.from("contacts").update({ company_id: keeper.id }).eq("company_id", loser.id).then(function (res) { must(res, "Contactpersonen verplaatsen mislukt"); });
+      })
+      .then(function () {
+        var tagIds = state.companyTagIds[loser.id] || [];
+        if (!tagIds.length) return;
+        var rows = tagIds.map(function (tagId) { return { company_id: keeper.id, tag_id: tagId }; });
+        return supabase.from("company_tags").upsert(rows).then(function (res) { must(res, "Tags overzetten mislukt"); });
+      })
+      .then(function () {
+        return supabase.from("company_superscore_history").select("report_date,superscore").eq("company_id", loser.id).then(function (res) {
+          must(res, "SuperScore-historie lezen mislukt");
+          var rows = (res.data || []).map(function (r) { return { company_id: keeper.id, report_date: r.report_date, superscore: r.superscore }; });
+          if (!rows.length) return;
+          // On a clash (same report date on both) the surviving company's own reading wins.
+          return supabase.from("company_superscore_history").upsert(rows, { onConflict: "company_id,report_date", ignoreDuplicates: true })
+            .then(function (res2) { must(res2, "SuperScore-historie overzetten mislukt"); });
+        });
+      })
+      .then(function () {
+        return supabase.from("contacts").select("id", { count: "exact", head: true }).eq("company_id", keeper.id).then(function (res) {
+          must(res, "Contactpersonen tellen mislukt");
+          return supabase.from("companies").update({ contact_count: res.count || 0 }).eq("id", keeper.id).then(function (res2) { must(res2, "Aantal contactpersonen bijwerken mislukt"); });
+        });
+      })
+      .then(function () {
+        return supabase.from("companies").delete().eq("id", loser.id).then(function (res) { must(res, "Oud bedrijf verwijderen mislukt"); });
+      })
+      .then(function () {
+        delete state.superscoreHistory[keeper.id];
+        delete state.superscoreHistory[loser.id];
+        state.expandedCompanyId = keeper.id;
+        runMerge.busy = false;
+        toast("Bedrijven samengevoegd");
+        closeModal();
+        clearSelection();
+      })
+      .catch(function (err) {
+        console.error(err);
+        runMerge.busy = false;
+        if (saveBtn) { saveBtn.disabled = false; saveBtn.textContent = "Samenvoegen"; }
+        toast((err && err.message) || "Samenvoegen mislukt");
+      });
+  }
+
   // ---------- bulk actions ----------
 
   function clearSelection() {
@@ -2613,6 +2823,7 @@
   $("#bulkBarTagInput").addEventListener("keydown", function (e) {
     if (e.key === "Enter") { e.preventDefault(); bulkAddTag(); }
   });
+  $("#bulkBarMerge").addEventListener("click", openMergeCompaniesModal);
   $("#bulkBarDelete").addEventListener("click", bulkDelete);
   $("#bulkBarClear").addEventListener("click", clearSelection);
   $("#selectAllCheckbox").addEventListener("change", function () {
