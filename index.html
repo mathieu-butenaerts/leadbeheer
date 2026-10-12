@@ -150,12 +150,6 @@
   .tag-pill .tag-pill-remove:hover, .tag-pill .tag-pill-edit:hover{ background:rgba(0,0,0,0.32); }
   .tag-pill .tag-pill-edit{ margin-left:-3px; }
   .tag-mode-row{ display:flex; gap:6px; margin-top:12px; padding-top:12px; border-top:1px solid var(--border); }
-  details.tag-deleted{ margin-top:12px; padding-top:12px; border-top:1px solid var(--border); }
-  details.tag-deleted summary{ cursor:pointer; color:var(--muted); font-size:12px; font-weight:600; }
-  .tag-deleted-list{ display:flex; flex-direction:column; gap:6px; margin-top:10px; }
-  .tag-deleted-row{ display:flex; flex-wrap:wrap; align-items:center; gap:8px; font-size:12.5px; color:var(--sub); }
-  .tag-deleted-name{ flex:1 1 220px; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-  .tag-deleted-name i{ color:var(--dim); font-size:11.5px; }
   .mode-btn{ font-size:11.5px; font-weight:600; padding:6px 12px; border-radius:999px; cursor:pointer;
     background:rgba(255,255,255,0.04); color:var(--muted); border:1px solid rgba(255,255,255,0.1); }
   .mode-btn:hover{ color:var(--text); }
@@ -367,10 +361,9 @@
   </div>
 
   <div class="panel" style="margin-bottom:16px;">
-    <h2>Tags <span class="hint">(klik om te filteren, × om te verwijderen)</span></h2>
+    <h2>Tags <span class="hint">(klik om te filteren, × om volledig te verwijderen)</span></h2>
     <div class="tag-manage-row" id="tagManageList"></div>
     <div class="tag-mode-row" id="tagFilterMode"></div>
-    <div id="tagDeletedPanel"></div>
   </div>
 
   <div class="filters">
@@ -454,7 +447,6 @@
     companies: [],
     contactsByCompany: {},
     tags: [],
-    deletedTags: [], // tags hidden by "verwijderen" (deleted_at set) — restorable; assignments stay in company_tags
     companyTagIds: {},
     superscoreHistory: {}, // companyId -> [{report_date, superscore}, ...], fetched lazily on expand
     selectedIds: {}, // companyId -> true, for the bulk-action checkboxes
@@ -582,7 +574,6 @@
     renderChips();
     renderBellerOptions();
     renderTagManagePanel();
-    renderDeletedTagsPanel();
     renderTagDatalist();
     renderStageChart();
     renderFollowupRanklist();
@@ -632,7 +623,10 @@
       root.innerHTML = '<span class="tag-manage-empty">Nog geen tags. Voeg er een toe via een bedrijf.</span>';
       return;
     }
-    var counts = tagUsageCounts();
+    var counts = {};
+    Object.keys(state.companyTagIds).forEach(function (companyId) {
+      state.companyTagIds[companyId].forEach(function (tagId) { counts[tagId] = (counts[tagId] || 0) + 1; });
+    });
     root.innerHTML = state.tags.map(function (t) {
       var color = tagColor(t.id);
       var active = state.tagFilters.indexOf(t.id) !== -1;
@@ -665,43 +659,6 @@
         e.stopPropagation(); // don't also trigger the pill's own filter-toggle click
         var tag = tagById(el.getAttribute("data-tag-delete"));
         if (tag) openDeleteTagModal(tag);
-      });
-    });
-  }
-
-  function tagUsageCounts() {
-    var counts = {};
-    Object.keys(state.companyTagIds).forEach(function (companyId) {
-      state.companyTagIds[companyId].forEach(function (tagId) { counts[tagId] = (counts[tagId] || 0) + 1; });
-    });
-    return counts;
-  }
-
-  function renderDeletedTagsPanel() {
-    var root = $("#tagDeletedPanel");
-    if (!state.deletedTags.length) { root.innerHTML = ""; return; }
-    var wasOpen = !!root.querySelector("details[open]");
-    var counts = tagUsageCounts();
-    root.innerHTML = '<details class="tag-deleted"' + (wasOpen ? " open" : "") + '><summary>Verwijderde tags (' + state.deletedTags.length + ')</summary><div class="tag-deleted-list">' +
-      state.deletedTags.map(function (t) {
-        var n = counts[t.id] || 0;
-        var when = t.deleted_at ? " · verwijderd op " + formatDate(String(t.deleted_at).slice(0, 10)) : "";
-        return '<div class="tag-deleted-row">' +
-          '<span class="tag-deleted-name" title="' + esc(t.name) + '">' + esc(shortTagName(t.name, 60)) + ' <i>(' + n + (n === 1 ? " bedrijf" : " bedrijven") + when + ')</i></span>' +
-          '<button type="button" class="btn btn-quiet" data-tag-restore="' + t.id + '">Herstellen</button>' +
-          '<button type="button" class="btn btn-quiet" data-tag-purge="' + t.id + '" style="color:var(--magenta);border-color:var(--magenta);">Definitief verwijderen</button>' +
-          '</div>';
-      }).join("") + '</div></details>';
-    Array.prototype.forEach.call(root.querySelectorAll("[data-tag-restore]"), function (el) {
-      el.addEventListener("click", function () {
-        var tag = state.deletedTags.find(function (t) { return t.id === el.getAttribute("data-tag-restore"); });
-        if (tag) restoreTag(tag);
-      });
-    });
-    Array.prototype.forEach.call(root.querySelectorAll("[data-tag-purge]"), function (el) {
-      el.addEventListener("click", function () {
-        var tag = state.deletedTags.find(function (t) { return t.id === el.getAttribute("data-tag-purge"); });
-        if (tag) purgeTag(tag);
       });
     });
   }
@@ -1572,66 +1529,50 @@
     });
   }
 
-  // "Verwijderen" only HIDES a tag (deleted_at) — its company links stay in
-  // company_tags, so restoring brings back exactly the companies it was on.
-  // Only "Definitief verwijderen" (purgeTag) really removes the row, which
-  // cascades to every company's link.
   function deleteTag(tagId) {
-    var tag = tagById(tagId);
-    supabase.from("tags").update({ deleted_at: new Date().toISOString() }).eq("id", tagId).then(function (res) {
+    supabase.from("tags").delete().eq("id", tagId).then(function (res) {
       if (res.error) {
         console.error(res.error);
         var again = $("#modal-save"); if (again) again.disabled = false;
-        toast(/deleted_at/.test(res.error.message || "") ? "Voer eerst de nieuwste supabase/schema.sql uit (kolom deleted_at ontbreekt)" : "Tag verwijderen mislukt");
+        toast("Tag verwijderen mislukt");
         return;
       }
-      if (tag) applyTagChange({ eventType: "UPDATE", new: Object.assign({}, tag, { deleted_at: new Date().toISOString() }) });
+      var idx = state.tagFilters.indexOf(tagId);
+      if (idx !== -1) state.tagFilters.splice(idx, 1);
       closeModal();
-      toast("Tag verwijderd — herstellen kan onder “Verwijderde tags”");
+      toast("Tag verwijderd");
     });
   }
 
-  function restoreTag(tag) {
-    var clash = state.tags.some(function (t) { return t.name.toLowerCase() === tag.name.toLowerCase(); });
-    if (clash) { toast('Er bestaat al een tag "' + tag.name + '" — hernoem die eerst'); return; }
-    supabase.from("tags").update({ deleted_at: null }).eq("id", tag.id).then(function (res) {
-      if (res.error) {
-        console.error(res.error);
-        toast(res.error.code === "23505" ? 'Er bestaat al een tag "' + tag.name + '" — hernoem die eerst' : "Herstellen mislukt");
-        return;
-      }
-      applyTagChange({ eventType: "UPDATE", new: Object.assign({}, tag, { deleted_at: null }) });
-      toast("Tag hersteld");
-    });
-  }
-
-  function purgeTag(tag) {
-    var n = tagUsageCounts()[tag.id] || 0;
-    if (!confirm('Tag "' + tag.name + '" DEFINITIEF verwijderen? Dit haalt hem van ' + n + (n === 1 ? " bedrijf" : " bedrijven") + ' en kan niet ongedaan gemaakt worden.')) return;
-    supabase.from("tags").delete().eq("id", tag.id).then(function (res) {
-      if (res.error) { console.error(res.error); toast("Definitief verwijderen mislukt"); return; }
-      applyTagChange({ eventType: "DELETE", old: tag });
-      toast("Tag definitief verwijderd");
-    });
-  }
-
-  // The check before deleting: shows how far-reaching it is, and that it can
-  // be undone, instead of a bare browser confirm() that's easy to click through.
+  // Deleting a tag removes it from every company at once and can't be undone,
+  // and a plain confirm() was too easy to click straight through. This names
+  // the tag, says how many companies lose it, and keeps the red button
+  // disabled until the box is ticked on purpose.
   function openDeleteTagModal(tag) {
-    var n = tagUsageCounts()[tag.id] || 0;
+    var n = 0;
+    Object.keys(state.companyTagIds).forEach(function (companyId) {
+      if (state.companyTagIds[companyId].indexOf(tag.id) !== -1) n++;
+    });
+    var companies = n + (n === 1 ? " bedrijf" : " bedrijven");
     var html = '';
     html += '<div class="modal-overlay" id="overlay">';
     html += '  <div class="modal">';
     html += '    <h2>Tag verwijderen</h2>';
-    html += '    <div style="font-size:13px;color:var(--sub);overflow-wrap:anywhere;">De tag <b style="color:var(--text)">' + esc(tag.name) + '</b> staat bij <b style="color:var(--text)">' + n + (n === 1 ? ' bedrijf' : ' bedrijven') + '</b>.</div>';
-    html += '    <div class="merge-note">De tag verdwijnt overal uit de lijst, de filters en de bedrijven. Er gaat niets definitief verloren: onder <b>Verwijderde tags</b> kun je hem terugzetten, mét alle bedrijven die hem hadden.</div>';
-    html += '    <div class="modal-actions"><button class="btn btn-quiet" id="modal-cancel">Annuleren</button><button class="btn" id="modal-save" style="background:var(--magenta);border-color:var(--magenta);color:#fff;">Verwijderen</button></div>';
+    html += '    <div style="font-size:13px;color:var(--sub);overflow-wrap:anywhere;">De tag <b style="color:var(--text)">' + esc(tag.name) + '</b> staat bij <b style="color:var(--text)">' + companies + '</b>.</div>';
+    html += '    <div class="merge-note">De tag verdwijnt bij <b>alle</b> bedrijven tegelijk. Dit kan niet ongedaan gemaakt worden.</div>';
+    html += '    <label style="display:flex;gap:8px;align-items:flex-start;font-size:13px;color:var(--text);cursor:pointer;"><input type="checkbox" id="f-delete-tag-sure" style="margin-top:3px"> <span>Ja, ik weet zeker dat ik deze tag bij ' + companies + ' wil verwijderen.</span></label>';
+    html += '    <div class="modal-actions"><button class="btn btn-quiet" id="modal-cancel">Annuleren</button><button class="btn" id="modal-save" disabled style="background:var(--magenta);border-color:var(--magenta);color:#fff;">Verwijderen</button></div>';
     html += '  </div>';
     html += '</div>';
     $("#modal-root").innerHTML = html;
     $("#overlay").addEventListener("click", function (e) { if (e.target.id === "overlay") closeModal(); });
     $("#modal-cancel").addEventListener("click", closeModal);
-    $("#modal-save").addEventListener("click", function () { this.disabled = true; deleteTag(tag.id); });
+    $("#f-delete-tag-sure").addEventListener("change", function () { $("#modal-save").disabled = !this.checked; });
+    $("#modal-save").addEventListener("click", function () {
+      if (!$("#f-delete-tag-sure").checked) return;
+      this.disabled = true;
+      deleteTag(tag.id);
+    });
   }
 
   // Renames in place: the tag row keeps its id, so every company that has
@@ -2474,7 +2415,7 @@
     if (existing) return Promise.resolve(existing.id);
     return supabase.from("tags").insert({ name: name }).select().single().then(function (res) {
       if (!res.error) return res.data.id;
-      return supabase.from("tags").select("id").ilike("name", name).is("deleted_at", null).limit(1).single().then(function (res2) {
+      return supabase.from("tags").select("id").ilike("name", name).limit(1).single().then(function (res2) {
         if (res2.error || !res2.data) throw new Error('Kon tag "' + name + '" niet aanmaken: ' + res.error.message);
         return res2.data.id;
       });
@@ -2714,7 +2655,7 @@
     var dupes = loserContacts.filter(function (p) { return contactLooksDuplicate(p, keeperContacts); });
 
     var tagUnion = {};
-    (state.companyTagIds[A.id] || []).concat(state.companyTagIds[B.id] || []).forEach(function (t) { if (tagById(t)) tagUnion[t] = true; });
+    (state.companyTagIds[A.id] || []).concat(state.companyTagIds[B.id] || []).forEach(function (t) { tagUnion[t] = true; });
 
     function optionHtml(field, side, company) {
       return '<label class="merge-opt"><input type="radio" name="mf-' + field.key + '" value="' + side + '"' +
@@ -2999,9 +2940,7 @@
       }
       state.companies = companiesRes.data || [];
       state.contactsByCompany = indexContactsByCompany(contactsRes.data);
-      var allTags = tagsRes.data || [];
-      state.tags = allTags.filter(function (t) { return !t.deleted_at; });
-      state.deletedTags = allTags.filter(function (t) { return !!t.deleted_at; });
+      state.tags = tagsRes.data || [];
       state.companyTagIds = indexCompanyTags(companyTagsRes.data);
       $("#liveText").textContent = "Live · verbonden";
       // Only now is state.companies actually populated — enabling these any
@@ -3051,28 +2990,16 @@
     return byCompany;
   }
 
-  // A tag lives in exactly one of two lists: active (state.tags) or hidden
-  // by "verwijderen" (state.deletedTags, deleted_at set). Every change event
-  // takes it out of both and puts it back in the right one, so deleting,
-  // restoring and renaming — by anyone — all go through the same path.
   function applyTagChange(payload) {
-    var rec = payload.eventType === "DELETE" ? payload.old : payload.new;
-    var id = rec && rec.id;
-    if (!id) return;
-    state.tags = state.tags.filter(function (t) { return t.id !== id; });
-    state.deletedTags = state.deletedTags.filter(function (t) { return t.id !== id; });
-    if (payload.eventType !== "DELETE") {
-      if (rec.deleted_at) {
-        state.deletedTags.push(rec);
-        var at = state.tagFilters.indexOf(id);
-        if (at !== -1) state.tagFilters.splice(at, 1);
-      } else {
-        state.tags.push(rec);
-      }
+    if (payload.eventType === "DELETE") {
+      var deletedId = payload.old && payload.old.id;
+      if (deletedId) state.tags = state.tags.filter(function (t) { return t.id !== deletedId; });
+    } else {
+      var rec = payload.new;
+      var idx = state.tags.findIndex(function (t) { return t.id === rec.id; });
+      if (idx >= 0) state.tags[idx] = rec; else state.tags.push(rec);
+      state.tags.sort(function (a, b) { return (a.name || "").localeCompare(b.name || ""); });
     }
-    var byName = function (a, b) { return (a.name || "").localeCompare(b.name || ""); };
-    state.tags.sort(byName);
-    state.deletedTags.sort(byName);
     render();
   }
 

@@ -238,20 +238,15 @@ name, click the pencil on its pill in the **Tags** section above the table
 its colour and any active filter carry over (no need to create a new tag and
 re-tag companies). A name that already exists (ignoring case) is refused.
 
-### Deleting and restoring tags
+### Deleting tags
 
-The × on a tag first asks for confirmation (showing how many companies have
-it) and then only **hides** the tag: it leaves the list, the filters and the
-companies, but its links to companies stay in the database. Under **Verwijderde
-tags** (below the tag list) **Herstellen** puts it back with exactly the
-companies it was on; **Definitief verwijderen** really removes it (and its
-links) and cannot be undone. This needs the `tags.deleted_at` column from
-[`supabase/schema.sql`](supabase/schema.sql) — re-run that file once; until
-then the × shows a message asking for it instead of deleting.
+The × on a tag removes it from every company at once and can't be undone in
+the app. It first opens a dialog that names the tag and says how many
+companies have it, and the red **Verwijderen** button stays disabled until
+you tick "Ja, ik weet zeker…".
 
-A tag that was deleted the old way (really gone) can be rebuilt from the daily
-backup made before the deletion, since each backup's `Tags` column records
-which companies carried which tag:
+A deleted tag can be rebuilt from the daily backup made before the deletion,
+since each backup's `Tags` column records which companies carried which tag:
 
 ```
 python tools/restore_tag_from_backup.py backups/leadbeheer-export-<date>.xlsx            # list the tags in that backup
