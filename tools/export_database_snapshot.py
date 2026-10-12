@@ -61,7 +61,10 @@ def fetch_all(base_url, headers, table, order=None):
 
 
 def build_rows(companies, contacts, tags, company_tags):
-    tag_name_by_id = {t["id"]: t["name"] for t in tags}
+    # Tags hidden via "verwijderen" in the app (deleted_at set) are left out,
+    # like the app's own export does -- otherwise re-importing a backup would
+    # bring them back as live tags.
+    tag_name_by_id = {t["id"]: t["name"] for t in tags if not t.get("deleted_at")}
     tag_names_by_company = {}
     for ct in company_tags:
         tag_names_by_company.setdefault(ct["company_id"], []).append(tag_name_by_id.get(ct["tag_id"]))

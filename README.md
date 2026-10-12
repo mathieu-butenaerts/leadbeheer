@@ -238,6 +238,32 @@ name, click the pencil on its pill in the **Tags** section above the table
 its colour and any active filter carry over (no need to create a new tag and
 re-tag companies). A name that already exists (ignoring case) is refused.
 
+### Deleting and restoring tags
+
+The × on a tag first asks for confirmation (showing how many companies have
+it) and then only **hides** the tag: it leaves the list, the filters and the
+companies, but its links to companies stay in the database. Under **Verwijderde
+tags** (below the tag list) **Herstellen** puts it back with exactly the
+companies it was on; **Definitief verwijderen** really removes it (and its
+links) and cannot be undone. This needs the `tags.deleted_at` column from
+[`supabase/schema.sql`](supabase/schema.sql) — re-run that file once; until
+then the × shows a message asking for it instead of deleting.
+
+A tag that was deleted the old way (really gone) can be rebuilt from the daily
+backup made before the deletion, since each backup's `Tags` column records
+which companies carried which tag:
+
+```
+python tools/restore_tag_from_backup.py backups/leadbeheer-export-<date>.xlsx            # list the tags in that backup
+python tools/restore_tag_from_backup.py backups/leadbeheer-export-<date>.xlsx 2           # tag no. 2 (or a unique part of its name)
+```
+
+That writes a small Company + Tags file; import it with "Importeren" and clear
+the batch-tag field on the confirmation screen. (It deliberately carries no
+other data, so nothing newer is overwritten by older values.) A tag created
+and deleted between two nightly backups isn't in any of them, and a tag that
+was on no company at all only exists in the database, not in a backup.
+
 ## Lusha lookups
 
 A magnifying-glass button on a contact card, and an "Opzoeken via Lusha"

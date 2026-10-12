@@ -98,10 +98,19 @@ create table if not exists public.tags (
   name       text not null,
   created_at timestamptz not null default now()
 );
--- Case-insensitive uniqueness so "Hot lead" and "hot lead" can't both be
--- created — the app checks this client-side too, but the constraint is what
--- actually prevents it under concurrent edits.
-create unique index if not exists idx_tags_name_lower on public.tags (lower(name));
+-- "Verwijderen" in the app only hides a tag (deleted_at set); its company
+-- links stay, so it can be restored from "Verwijderde tags". Only
+-- "Definitief verwijderen" really deletes the row.
+alter table public.tags add column if not exists deleted_at timestamptz;
+
+-- Case-insensitive uniqueness among ACTIVE tags so "Hot lead" and "hot lead"
+-- can't both exist — the app checks this client-side too, but the
+-- constraint is what actually prevents it under concurrent edits. Hidden
+-- (deleted) tags are excluded, so a new tag may reuse a deleted one's name.
+-- Dropped and recreated (not "if not exists") because the earlier version
+-- of this index covered every row and has to be replaced by the partial one.
+drop index if exists idx_tags_name_lower;
+create unique index idx_tags_name_lower on public.tags (lower(name)) where deleted_at is null;
 
 create table if not exists public.company_tags (
   company_id uuid not null references public.companies(id) on delete cascade,
