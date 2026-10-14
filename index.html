@@ -355,7 +355,7 @@
       <div class="chart-wrap"><canvas id="stageChart"></canvas></div>
     </div>
     <div class="panel">
-      <h2>Vervolgacties <span class="hint">(klik om bedrijf te openen)</span></h2>
+      <h2>Vervolgacties <span class="hint">(klik om bedrijf te openen · <span style="color:var(--magenta)">rood</span> = verlopen, <span style="color:var(--blauw-l)">blauw</span> = binnen 7 dagen, wit = later)</span></h2>
       <ul class="ranklist" id="followupRanklist"></ul>
     </div>
   </div>
@@ -373,7 +373,8 @@
     <select id="followup-filter">
       <option value="">Alle vervolgdata</option>
       <option value="overdue">Verlopen</option>
-      <option value="week">Deze week</option>
+      <option value="week">Binnen 7 dagen</option>
+      <option value="later">Later</option>
       <option value="none">Geen datum</option>
     </select>
     <div class="filters-spacer"></div>
@@ -849,7 +850,10 @@
       });
     });
     items.sort(function (a, b) { return a.date < b.date ? -1 : (a.date > b.date ? 1 : 0); });
-    var shown = items.slice(0, 8);
+    // Every follow-up, soonest first — the list scrolls. It used to stop at
+    // 8, so once 8 were overdue or due this week the later (white) ones
+    // never showed up at all.
+    var shown = items;
     var root = $("#followupRanklist");
     if (!shown.length) {
       root.innerHTML = '<li class="empty">Geen geplande vervolgacties.</li>';
@@ -859,7 +863,10 @@
       var status = followUpStatus(it.date);
       var cls = status === "overdue" ? " fu-overdue" : (status === "week" ? " fu-soon" : "");
       var d = new Date(it.date + "T00:00:00");
-      var short = d.toLocaleDateString("nl-NL", { day: "2-digit", month: "2-digit" });
+      // Add the year once a date isn't in the current one, so "03/02" can't
+      // be mistaken for this February when it's next year's.
+      var dateFormat = d.getFullYear() === new Date().getFullYear() ? { day: "2-digit", month: "2-digit" } : { day: "2-digit", month: "2-digit", year: "numeric" };
+      var short = d.toLocaleDateString("nl-NL", dateFormat);
       var coLine = esc(it.companyName) + (it.beller ? ' <span class="beller">· ' + esc(it.beller) + '</span>' : '');
       return '<li data-goto-company="' + it.companyId + '">' +
         '<span><span class="who">' + esc(it.contactName) + '</span><span class="co">' + coLine + '</span></span>' +
