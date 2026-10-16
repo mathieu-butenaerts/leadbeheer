@@ -101,8 +101,13 @@ def _require_columns(df, required_columns):
     return df
 
 
-def read_source(path, required_columns):
-    return _require_columns(pd.read_excel(path, dtype=str), required_columns)
+def read_source(path, required_columns, sheet_name=None):
+    """Reads one sheet. With sheet_name, that tab is used when the workbook
+    has it (so it needn't be moved to the front); otherwise -- and for every
+    script that passes no name -- the first sheet, as before."""
+    xl = pd.ExcelFile(path)
+    sheet = sheet_name if sheet_name in xl.sheet_names else 0
+    return _require_columns(xl.parse(sheet, dtype=str), required_columns)
 
 
 def read_csv_source(path, required_columns):
