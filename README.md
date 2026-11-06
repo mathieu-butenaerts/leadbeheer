@@ -184,6 +184,27 @@ GitHub's):
   app/browser and out of this repo; it only ever belongs in this one
   GitHub secret.
 
+## Statuses (Fase)
+
+In progress · Meeting geboekt · Deal · Verloren · Discontinued. These are the
+five original statuses renamed in place, so no company lost its status — the
+stored values didn't change, only their names:
+
+| Stored value | Earlier name | Now |
+|---|---|---|
+| `nieuw` | Nieuw | In progress |
+| `gecontacteerd` | Gecontacteerd | Meeting geboekt |
+| `gekwalificeerd` | Gekwalificeerd | Deal |
+| `verloren` | Verloren | Verloren |
+| `gewonnen` | Gewonnen | Discontinued |
+
+"Actieve leads" on the dashboard counts In progress + Meeting geboekt;
+"Deals" counts Deal. Import files (and old backups) that still use the
+earlier names keep working — each maps to the same stored value as in the
+table. The `STAGES` list at the top of the script in `index.html` (and
+`STAGE_LABELS` in `tools/export_database_snapshot.py`) is the one place to
+change names.
+
 ## Bulk-editing companies
 
 A checkbox on each company row (and one in the header to select/deselect

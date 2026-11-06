@@ -31,12 +31,15 @@ from _common import TEMPLATE_COLUMNS, clear_output, write_output
 
 PAGE_SIZE = 1000
 
+# Stored value -> the name shown in the app (keep in step with STAGES in
+# index.html). Backups made before the rename say Nieuw / Gecontacteerd /
+# Gekwalificeerd / Gewonnen for the first four; the app still reads those.
 STAGE_LABELS = {
-    "nieuw": "Nieuw",
-    "gecontacteerd": "Gecontacteerd",
-    "gekwalificeerd": "Gekwalificeerd",
-    "gewonnen": "Gewonnen",
+    "nieuw": "In progress",
+    "gecontacteerd": "Meeting geboekt",
+    "gekwalificeerd": "Deal",
     "verloren": "Verloren",
+    "gewonnen": "Discontinued",
 }
 
 

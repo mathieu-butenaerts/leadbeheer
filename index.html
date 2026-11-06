@@ -17,11 +17,11 @@
     --blauw:#199DD9; --blauw-l:#4ab8e6; --indigo:#11448D; --violet:#83007D; --magenta:#E9167D;
     --text:#eef3f8; --sub:#cfe0f0; --muted:#8ea2b8; --dim:#5f7690;
 
-    --stage-nieuw:#8ea2b8; --stage-nieuw-bg:rgba(142,162,184,0.14);
-    --stage-gecontacteerd:#199DD9; --stage-gecontacteerd-bg:rgba(25,157,217,0.14);
-    --stage-gekwalificeerd:#c060b8; --stage-gekwalificeerd-bg:rgba(131,0,125,0.20);
-    --stage-gewonnen:#2fbf7a; --stage-gewonnen-bg:rgba(47,191,122,0.14);
+    --stage-in-progress:#199DD9; --stage-in-progress-bg:rgba(25,157,217,0.14);
+    --stage-meeting:#c060b8; --stage-meeting-bg:rgba(131,0,125,0.20);
+    --stage-deal:#2fbf7a; --stage-deal-bg:rgba(47,191,122,0.14);
     --stage-verloren:#E9167D; --stage-verloren-bg:rgba(233,22,125,0.14);
+    --stage-discontinued:#8ea2b8; --stage-discontinued-bg:rgba(142,162,184,0.14);
 
     /* Lusha's actual brand purple (#600DFF, from their logo SVG), plus a
        lighter tint for readable text/icons on this dark background. */
@@ -95,7 +95,7 @@
   .card .sub{ font-size:11px; color:var(--dim); margin-top:6px; }
   .card.accent{ background:rgba(25,157,217,0.08); border-color:rgba(25,157,217,0.35); }
   .card.accent .value{ color:var(--blauw); }
-  .card.won .value{ color:var(--stage-gewonnen); }
+  .card.won .value{ color:var(--stage-deal); }
 
   /* ---- summary ---- */
   .layout{ display:grid; grid-template-columns:1.1fr 1fr; gap:14px; margin-bottom:16px; }
@@ -295,7 +295,7 @@
   details.merge-more summary{ cursor:pointer; color:var(--muted); font-size:12px; font-weight:600; margin:2px 0 10px; }
   .import-summary{ display:flex; flex-wrap:wrap; gap:10px 20px; font-size:13px; }
   .import-summary b{ font-family:'Archivo',sans-serif; font-size:16px; }
-  .import-summary .ok b{ color:var(--stage-gewonnen); }
+  .import-summary .ok b{ color:var(--stage-deal); }
   .import-summary .skip b{ color:var(--stage-verloren); }
   .import-dupes{ max-height:260px; overflow-y:auto; border:1px solid var(--border); border-radius:10px; }
   .import-dupes table{ font-size:12px; }
@@ -433,12 +433,19 @@
 (function () {
   "use strict";
 
+  // The statuses were renamed in place: the KEYS below are what's stored in
+  // companies.stage (and in old backups), so they stay as they were and only
+  // the labels changed — every company kept its status, just under its new
+  // name (nieuw = In progress, gecontacteerd = Meeting geboekt,
+  // gekwalificeerd = Deal, gewonnen = Discontinued, verloren = Verloren).
+  // Array order is the display order. closed = no longer an active lead;
+  // deal = counts as a win on the dashboard.
   var STAGES = [
-    { key: "nieuw",          label: "Nieuw",          color: "--stage-nieuw",          bg: "--stage-nieuw-bg" },
-    { key: "gecontacteerd",  label: "Gecontacteerd",  color: "--stage-gecontacteerd",  bg: "--stage-gecontacteerd-bg" },
-    { key: "gekwalificeerd", label: "Gekwalificeerd", color: "--stage-gekwalificeerd", bg: "--stage-gekwalificeerd-bg" },
-    { key: "gewonnen",       label: "Gewonnen",       color: "--stage-gewonnen",       bg: "--stage-gewonnen-bg" },
-    { key: "verloren",       label: "Verloren",       color: "--stage-verloren",       bg: "--stage-verloren-bg" }
+    { key: "nieuw",          label: "In progress",     color: "--stage-in-progress",  bg: "--stage-in-progress-bg",  closed: false },
+    { key: "gecontacteerd",  label: "Meeting geboekt", color: "--stage-meeting",      bg: "--stage-meeting-bg",      closed: false },
+    { key: "gekwalificeerd", label: "Deal",            color: "--stage-deal",         bg: "--stage-deal-bg",         closed: true, deal: true },
+    { key: "verloren",       label: "Verloren",        color: "--stage-verloren",     bg: "--stage-verloren-bg",     closed: true },
+    { key: "gewonnen",       label: "Discontinued",    color: "--stage-discontinued", bg: "--stage-discontinued-bg", closed: true }
   ];
   function stageInfo(key) {
     return STAGES.find(function (s) { return s.key === key; }) || STAGES[0];
@@ -867,9 +874,9 @@
       // be mistaken for this February when it's next year's.
       var dateFormat = d.getFullYear() === new Date().getFullYear() ? { day: "2-digit", month: "2-digit" } : { day: "2-digit", month: "2-digit", year: "numeric" };
       var short = d.toLocaleDateString("nl-NL", dateFormat);
-      var coLine = esc(it.companyName) + (it.beller ? ' <span class="beller">· ' + esc(it.beller) + '</span>' : '');
+      var contactLine = esc(it.contactName) + (it.beller ? ' <span class="beller">· ' + esc(it.beller) + '</span>' : '');
       return '<li data-goto-company="' + it.companyId + '">' +
-        '<span><span class="who">' + esc(it.contactName) + '</span><span class="co">' + coLine + '</span></span>' +
+        '<span><span class="who">' + esc(it.companyName) + '</span><span class="co">' + contactLine + '</span></span>' +
         '<span class="when tnum' + cls + '">' + esc(short) + '</span></li>';
     }).join("");
     Array.prototype.forEach.call(root.querySelectorAll("[data-goto-company]"), function (li) {
@@ -937,13 +944,13 @@
   function renderStats() {
     var total = state.companies.length;
     var totalContacts = state.companies.reduce(function (a, c) { return a + (c.contact_count || 0); }, 0);
-    var active = state.companies.filter(function (c) { return c.stage !== "gewonnen" && c.stage !== "verloren"; }).length;
-    var won = state.companies.filter(function (c) { return c.stage === "gewonnen"; }).length;
+    var active = state.companies.filter(function (c) { return !stageInfo(c.stage).closed; }).length;
+    var won = state.companies.filter(function (c) { return !!stageInfo(c.stage).deal; }).length;
     var items = [
       { n: total, l: "Bedrijven", cls: "" },
       { n: totalContacts, l: "Contactpersonen", cls: "" },
       { n: active, l: "Actieve leads", cls: "accent" },
-      { n: won, l: "Gewonnen", cls: "won" }
+      { n: won, l: "Deals", cls: "won" }
     ];
     $("#stats").innerHTML = items.map(function (it) {
       return '<div class="card ' + it.cls + '"><div class="label">' + esc(it.l) + '</div><div class="value tnum">' + it.n + '</div></div>';
@@ -1113,7 +1120,7 @@
         html += ' <span class="score tnum" style="margin-left:6px">' + esc(String(c.superscore)) + '</span>';
         if (c.previous_superscore != null) html += ' <span style="font-size:11px;color:var(--dim);text-transform:none;">was ' + esc(String(c.previous_superscore)) + '</span>';
         if (c.superscore_change != null) {
-          var changeColor = c.superscore_change > 0 ? "var(--stage-gewonnen)" : (c.superscore_change < 0 ? "var(--magenta)" : "var(--dim)");
+          var changeColor = c.superscore_change > 0 ? "var(--stage-deal)" : (c.superscore_change < 0 ? "var(--magenta)" : "var(--dim)");
           html += ' <span class="tnum" style="font-size:11px;margin-left:2px;color:' + changeColor + ';text-transform:none;">(' + (c.superscore_change > 0 ? "+" : "") + esc(String(c.superscore_change)) + '%)</span>';
         }
       }
@@ -1894,9 +1901,14 @@
 
   // ---------- import / export ----------
 
+  // Files made before the rename (old exports/backups/templates) still carry
+  // the previous names; each maps to the same stored key it always had, i.e.
+  // the same new name every existing company got.
+  var LEGACY_STAGE_LABELS = { "nieuw": "nieuw", "gecontacteerd": "gecontacteerd", "gekwalificeerd": "gekwalificeerd", "gewonnen": "gewonnen" };
   function stageKeyFromLabel(label) {
-    var match = STAGES.find(function (s) { return s.label.toLowerCase() === (label || "").trim().toLowerCase(); });
-    return match ? match.key : "";
+    var wanted = (label || "").trim().toLowerCase();
+    var match = STAGES.find(function (s) { return s.label.toLowerCase() === wanted; });
+    return match ? match.key : (LEGACY_STAGE_LABELS[wanted] || "");
   }
 
   function parseDateCell(v) {
@@ -1925,7 +1937,7 @@
     var example = {
       "Company": "Van Herck Verpakkingen",
       "Company LinkedIn": "https://www.linkedin.com/company/van-herck-verpakkingen",
-      "Fase": "Gecontacteerd",
+      "Fase": "Meeting geboekt",
       "Bedrijfsnotities": "Bezig met vervanging van hun huidige leverancier.",
       "Tags": "Klant, Prioriteit hoog",
       "Engagement Level": "Medium",
