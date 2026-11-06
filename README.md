@@ -184,6 +184,37 @@ GitHub's):
   app/browser and out of this repo; it only ever belongs in this one
   GitHub secret.
 
+## Notes
+
+Notes are a log: open a company and write under **Notities** (Ctrl+Enter or
+the button), or open **Notities** on a contact card for that person. Each
+note keeps who wrote it and when, newest first, and shows up for everyone at
+once. You can delete your own notes (not other people's) and notes can't be
+edited — they're a record of what was said.
+
+The first time you add a note you're asked what to call yourself (sign-up only
+collects an e-mail); that name is saved on your account, so it follows you to
+other browsers, and "wijzig naam" next to the box changes it.
+
+Text that came in through an import (`Bedrijfsnotities`, `Notities`,
+`Belaantekeningen`) is shown below the notes as **Geïmporteerde notitie**,
+read-only (the company's one can be removed with its ×). The contact edit
+form no longer has note fields. "Exporteren" and the nightly backup write the
+dated notes into those same columns after the imported text, as
+`[dd-mm-yyyy hh:mm Name] text`, so nothing is lost. Merging companies and
+moving contacts take their notes with them.
+
+Needs the `notes` table: re-run [`supabase/schema.sql`](supabase/schema.sql)
+once. Until then the app works as before, with a message where the notes box
+would be.
+
+## Searching
+
+The search box finds a company by its name **or by any of its contacts'
+names or e-mail addresses** (first and last name in either order, so
+"jansen jan" finds Jan Jansen). When a company is shown because of a contact,
+the row says which one ("Contactpersoon: Jan Jansen").
+
 ## Statuses (Fase)
 
 In progress · Meeting geboekt · Deal · Verloren · Discontinued. These are the

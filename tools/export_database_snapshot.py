@@ -63,7 +63,50 @@ def fetch_all(base_url, headers, table, order=None):
     return rows
 
 
-def build_rows(companies, contacts, tags, company_tags):
+def fetch_notes(base_url, headers):
+    """The notes table only exists once supabase/schema.sql has been re-run
+    after notes were added; until then PostgREST answers 404 -- that's "no
+    notes yet", not a reason to fail the whole nightly backup."""
+    try:
+        return fetch_all(base_url, headers, "notes")
+    except requests.HTTPError as exc:
+        if exc.response is not None and exc.response.status_code == 404:
+            print("No notes table yet (run supabase/schema.sql) -- backing up without notes.")
+            return []
+        raise
+
+
+def format_note_time(iso):
+    """'2026-11-06T13:40:12.3+00:00' -> '06-11-2026 14:40' in Dutch local time,
+    the same way the app shows it."""
+    from datetime import datetime, timezone
+    when = datetime.fromisoformat(iso.replace("Z", "+00:00"))
+    try:
+        from zoneinfo import ZoneInfo
+        when = when.astimezone(ZoneInfo("Europe/Amsterdam"))
+    except Exception:
+        when = when.astimezone(timezone.utc)
+    return when.strftime("%d-%m-%Y %H:%M")
+
+
+def notes_text(legacy, notes):
+    """The sheet has one text cell per notes column, so dated notes go after
+    any imported text, oldest first, as "[dd-mm-yyyy hh:mm Name] text" --
+    the same shape the app's own export writes."""
+    parts = [legacy] if legacy else []
+    for n in sorted(notes, key=lambda n: n["created_at"]):
+        parts.append(f"[{format_note_time(n['created_at'])} {n.get('author_name') or '?'}] {n['body']}")
+    return "\n\n".join(parts)
+
+
+def build_rows(companies, contacts, tags, company_tags, notes=()):
+    notes_by_company, notes_by_contact = {}, {}
+    for n in notes:
+        if n.get("company_id"):
+            notes_by_company.setdefault(n["company_id"], []).append(n)
+        elif n.get("contact_id"):
+            notes_by_contact.setdefault(n["contact_id"], []).append(n)
+
     tag_name_by_id = {t["id"]: t["name"] for t in tags}
     tag_names_by_company = {}
     for ct in company_tags:
@@ -80,7 +123,7 @@ def build_rows(companies, contacts, tags, company_tags):
             "Company": company.get("name") or "",
             "Company LinkedIn": company.get("linkedin") or "",
             "Fase": STAGE_LABELS.get(stage, stage),
-            "Bedrijfsnotities": company.get("notes") or "",
+            "Bedrijfsnotities": notes_text(company.get("notes") or "", notes_by_company.get(company["id"], [])),
             "Tags": ", ".join(sorted(filter(None, tag_names_by_company.get(company["id"], [])))),
             "Engagement Level": company.get("engagement_level") or "",
             "Organic Impressions": company.get("organic_impressions"),
@@ -128,7 +171,7 @@ def build_rows(companies, contacts, tags, company_tags):
                 "Beller": p.get("beller") or "",
                 "Vervolg": p.get("vervolg") or "",
                 "Vervolgdatum": p.get("follow_up_date") or "",
-                "Notities": p.get("notities") or "",
+                "Notities": notes_text(p.get("notities") or "", notes_by_contact.get(p["id"], [])),
                 "Belaantekeningen": p.get("belaantekeningen") or "",
                 "Mogelijk interessante hook": p.get("hook") or "",
             })
@@ -159,8 +202,9 @@ def main():
     contacts = fetch_all(supabase_url, headers, "contacts")
     tags = fetch_all(supabase_url, headers, "tags")
     company_tags = fetch_all(supabase_url, headers, "company_tags")
+    notes = fetch_notes(supabase_url, headers)
 
-    rows = build_rows(companies, contacts, tags, company_tags)
+    rows = build_rows(companies, contacts, tags, company_tags, notes)
 
     # Overwrite, not append -- this is today's full snapshot, not an
     # incremental migration batch like the migrate_*.py scripts produce.

@@ -85,6 +85,19 @@ set company_id = m.keeper_id
 from _dupe_map m
 where c.company_id = m.dupe_id;
 
+-- Company-level notes (the dated notes written in the app) go along too;
+-- without this they'd be deleted together with the duplicate company. Guarded
+-- so the script still runs where schema.sql hasn't added the notes table yet.
+do $$
+begin
+  if to_regclass('public.notes') is not null then
+    update public.notes n
+    set company_id = m.keeper_id
+    from _dupe_map m
+    where n.company_id = m.dupe_id;
+  end if;
+end $$;
+
 -- Move tags too, but skip a row that would collide with one the keeper
 -- already has for the same tag (company_tags' primary key is
 -- (company_id, tag_id), so a straight move could violate it).
@@ -152,6 +165,17 @@ update public.contacts k set
   hook             = coalesce(nullif(k.hook, ''),             (select nullif(d.hook, '')             from public.contacts d join _contact_dupes m on m.dupe_id = d.id where m.keeper_id = k.id and nullif(d.hook, '')             is not null order by d.created_at limit 1), ''),
   follow_up_date   = coalesce(k.follow_up_date,               (select d.follow_up_date               from public.contacts d join _contact_dupes m on m.dupe_id = d.id where m.keeper_id = k.id and d.follow_up_date is not null order by d.created_at limit 1))
 where k.id in (select keeper_id from _contact_dupes);
+
+-- A removed duplicate contact's notes move to the contact it duplicates.
+do $$
+begin
+  if to_regclass('public.notes') is not null then
+    update public.notes n
+    set contact_id = d.keeper_id
+    from _contact_dupes d
+    where n.contact_id = d.dupe_id;
+  end if;
+end $$;
 
 -- contact_count's delete trigger keeps the per-company count in step.
 delete from public.contacts c

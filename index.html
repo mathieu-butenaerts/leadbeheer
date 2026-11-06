@@ -260,6 +260,24 @@
 
   .add-contact-row{ display:flex; justify-content:flex-start; }
 
+  /* ---- notes log (company + contact) ---- */
+  .notes-log{ display:flex; flex-direction:column; gap:8px; min-width:0; }
+  .note-input{ width:100%; min-height:56px; resize:vertical; border:1px solid var(--border); background:var(--panel); color:var(--text);
+    border-radius:8px; padding:9px 10px; font-size:12.5px; font-family:inherit; }
+  .note-compose-row{ display:flex; justify-content:space-between; align-items:center; gap:8px; margin-top:6px; flex-wrap:wrap; }
+  .note-as{ font-size:11px; color:var(--dim); }
+  .note-as button{ background:none; border:none; color:var(--blauw-l); cursor:pointer; font-size:11px; padding:0; font-family:inherit; }
+  .note{ background:var(--bg2); border:1px solid var(--border); border-radius:8px; padding:8px 10px; min-width:0; }
+  .note-legacy{ border-style:dashed; }
+  .note-meta{ display:flex; align-items:center; gap:8px; font-size:11px; color:var(--dim); margin-bottom:3px; }
+  .note-meta b{ color:var(--sub); font-weight:600; }
+  .note-meta .note-del{ margin-left:auto; }
+  .note-body{ font-size:12.5px; color:var(--text); white-space:pre-wrap; overflow-wrap:anywhere; }
+  details.contact-notes{ border-top:1px solid var(--border); padding-top:9px; }
+  details.contact-notes > summary{ cursor:pointer; font-size:10.5px; font-weight:700; text-transform:uppercase; letter-spacing:.05em; color:var(--muted); }
+  details.contact-notes[open] > summary{ margin-bottom:8px; }
+  .match-hint{ font-size:11px; color:var(--blauw-l); margin-top:3px; }
+
   .empty-state{ text-align:center; color:var(--muted); padding:48px 20px; font-size:13px; }
   .loading{ text-align:center; color:var(--muted); padding:60px 20px; }
   .error{ padding:20px; text-align:center; color:#f0b6cf; background:var(--panel); border:1px solid rgba(233,22,125,0.35); border-radius:14px; margin-bottom:16px; }
@@ -371,7 +389,7 @@
   </div>
 
   <div class="filters">
-    <input type="text" id="search-input" placeholder="Zoek op bedrijfsnaam…">
+    <input type="text" id="search-input" placeholder="Zoek op bedrijf of contactpersoon…">
     <div class="stage-pills" id="stage-chips"></div>
     <select id="beller-filter"><option value="">Alle bellers</option></select>
     <select id="followup-filter">
@@ -470,10 +488,16 @@
     tagFilters: [],
     tagFilterMode: "or", // "or" = any selected tag matches, "and" = all must match
     sort: { field: "name", dir: "asc" },
-    savedTimers: {}
+    notesByOwner: {},      // "company:<id>" / "contact:<id>" -> notes, newest first
+    notesAvailable: true,  // false until supabase/schema.sql (notes table) has been run
+    noteDrafts: {},        // unsent text per notes box, so a live update can't wipe what's being typed
+    openNotes: {},         // contact-card notes sections the user opened/closed
+    me: null,              // { id, email, role } of the signed-in user
+    noterName: ""          // display name written on this user's notes
   };
   var companiesChannel = null;
   var contactsChannel = null;
+  var notesChannel = null;
   var tagsChannel = null;
   var companyTagsChannel = null;
   var stageChart = null;
@@ -980,11 +1004,20 @@
     });
   }
 
+  // Search matches the company name, or any of its contacts: first/last name
+  // (in any order — "jansen jan" finds Jan Jansen) or e-mail address.
+  function contactMatchesSearch(p, q) {
+    var hay = ((p.first_name || "") + " " + (p.last_name || "") + " " + (p.email || "") + " " + (p.email2 || "")).toLowerCase();
+    return q.split(/\s+/).filter(Boolean).every(function (t) { return hay.indexOf(t) !== -1; });
+  }
+  function companyNameMatches(c, q) { return (c.name || "").toLowerCase().indexOf(q) !== -1; }
+  function matchingContacts(c, q) { return (state.contactsByCompany[c.id] || []).filter(function (p) { return contactMatchesSearch(p, q); }); }
+
   function filteredCompanies() {
     var q = state.search.trim().toLowerCase();
     var list = state.companies.filter(function (c) {
       if (state.stageFilter !== "all" && c.stage !== state.stageFilter) return false;
-      if (q && (c.name || "").toLowerCase().indexOf(q) === -1) return false;
+      if (q && !companyNameMatches(c, q) && !matchingContacts(c, q).length) return false;
       if (!companyMatchesContactFilters(c)) return false;
       if (state.tagFilters.length && !companyMatchesTagFilters(c)) return false;
       return true;
@@ -1004,9 +1037,18 @@
       root.innerHTML = '<tr><td colspan="8"><div class="empty-state">Geen bedrijven gevonden. Pas je zoekopdracht aan of voeg een nieuw bedrijf toe.</div></td></tr>';
       return;
     }
+    // Every live update re-draws the whole table; put the cursor back in the
+    // note box someone is typing in, instead of dropping them out of it.
+    var active = document.activeElement;
+    var typingKey = active && active.getAttribute ? active.getAttribute("data-note-input") : null;
+    var selStart = typingKey ? active.selectionStart : 0, selEnd = typingKey ? active.selectionEnd : 0;
     root.innerHTML = list.map(renderCompanyRows).join("");
     attachHandlers(root);
     renderSuperscoreChart(root);
+    if (typingKey) {
+      var again = root.querySelector('[data-note-input="' + typingKey + '"]');
+      if (again) { again.focus(); try { again.setSelectionRange(selStart, selEnd); } catch (e) {} }
+    }
   }
 
   // At most one company is ever expanded at a time, so at most one of
@@ -1054,7 +1096,15 @@
     html += '  <td><span class="chev"><svg width="9" height="9" viewBox="0 0 10 10" fill="none"><path d="M2 1L7.5 5L2 9" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg></span></td>';
     var rowTags = (state.companyTagIds[c.id] || []).map(tagById).filter(Boolean);
     var rowTagChips = rowTags.length ? '<span class="tag-chip-row">' + rowTags.map(function (t) { return renderTagChip(t); }).join("") + '</span>' : "";
-    html += '  <td><div class="company-name-cell"><span class="company-name">' + esc(c.name || "(naam onbekend)") + '</span>' + linkedin + rowTagChips + '</div></td>';
+    // When the row is here because of a contact (not the company name), say which.
+    var searchQuery = state.search.trim().toLowerCase();
+    var matchHint = "";
+    if (searchQuery && !companyNameMatches(c, searchQuery)) {
+      var hits = matchingContacts(c, searchQuery);
+      var hitNames = hits.slice(0, 3).map(function (p) { return ((p.first_name || "") + " " + (p.last_name || "")).trim() || p.email || "(naam onbekend)"; });
+      if (hitNames.length) matchHint = '<div class="match-hint">Contactpersoon: ' + esc(hitNames.join(", ")) + (hits.length > 3 ? " +" + (hits.length - 3) : "") + '</div>';
+    }
+    html += '  <td><div class="company-name-cell"><span class="company-name">' + esc(c.name || "(naam onbekend)") + '</span>' + linkedin + rowTagChips + '</div>' + matchHint + '</td>';
     html += '  <td><select class="stage-pill tnum" data-stage-select="' + c.id + '" style="' + stagePillStyle(c.stage) + '" onclick="event.stopPropagation()">' + stageOptions + '</select></td>';
     html += '  <td class="contact-count-cell tnum">' + (c.contact_count || 0) + '</td>';
     var nextDate = nextFollowUp(c.id);
@@ -1082,11 +1132,7 @@
     var html = '';
 
     html += '<div class="meta-col">';
-    html += '  <div class="meta-block">';
-    html += '    <span class="field-label">Bedrijfsnotities</span>';
-    html += '    <textarea data-company-notes="' + c.id + '" placeholder="Algemene notities over dit bedrijf…">' + esc(c.notes || "") + '</textarea>';
-    html += '    <div class="save-hint" data-notes-hint="' + c.id + '">Wijzigingen worden automatisch opgeslagen</div>';
-    html += '  </div>';
+    html += '  <div class="meta-block">' + renderCompanyNotes(c) + '</div>';
     html += '  <div class="meta-block">';
     html += '    <span class="field-label">Company LinkedIn</span>';
     html += '    <input type="text" data-company-linkedin="' + c.id + '" placeholder="https://linkedin.com/company/…" value="' + esc(c.linkedin || "") + '">';
@@ -1218,13 +1264,7 @@
       html += '<div class="hook-box"><svg width="14" height="14" viewBox="0 0 15 15" fill="none" style="flex:none"><path d="M7.5 1.5C4.5 1.5 3 3.8 3 6c0 1.9 1.1 2.9 1.7 3.7.4.5.6.9.6 1.3v.5h4.4v-.5c0-.4.2-.8.6-1.3.6-.8 1.7-1.8 1.7-3.7 0-2.2-1.5-4.5-4.5-4.5z" stroke="currentColor" stroke-width="1.2"/><path d="M6 13.5h3" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/></svg><span><strong>Hook:</strong> ' + esc(p.hook) + '</span></div>';
     }
 
-    var hasNotes = p.notities || p.belaantekeningen;
-    if (hasNotes) {
-      html += '<div class="notes-grid">';
-      if (p.notities) html += '<div><span class="k">Notities</span><span class="v">' + esc(p.notities) + '</span></div>';
-      if (p.belaantekeningen) html += '<div><span class="k">Belaantekeningen</span><span class="v">' + esc(p.belaantekeningen) + '</span></div>';
-      html += '</div>';
-    }
+    html += renderContactNotes(p);
 
     html += '</div>';
     return html;
@@ -1253,11 +1293,29 @@
     Array.prototype.forEach.call(root.querySelectorAll("[data-delete-company]"), function (el) {
       el.addEventListener("click", function () { deleteCompany(el.getAttribute("data-delete-company")); });
     });
-    Array.prototype.forEach.call(root.querySelectorAll("[data-company-notes]"), function (el) {
-      el.addEventListener("blur", function () {
-        var id = el.getAttribute("data-company-notes");
-        updateCompany(id, { notes: el.value });
-        flashSaved(id);
+    Array.prototype.forEach.call(root.querySelectorAll("[data-note-input]"), function (el) {
+      var key = el.getAttribute("data-note-input");
+      el.addEventListener("input", function () { state.noteDrafts[key] = el.value; });
+      el.addEventListener("keydown", function (e) {
+        if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) { e.preventDefault(); addNoteFromBox(key); }
+      });
+    });
+    Array.prototype.forEach.call(root.querySelectorAll("[data-note-add]"), function (el) {
+      el.addEventListener("click", function () { addNoteFromBox(el.getAttribute("data-note-add")); });
+    });
+    Array.prototype.forEach.call(root.querySelectorAll("[data-note-delete]"), function (el) {
+      el.addEventListener("click", function () { deleteNote(el.getAttribute("data-note-delete")); });
+    });
+    Array.prototype.forEach.call(root.querySelectorAll("[data-noter-edit]"), function (el) {
+      el.addEventListener("click", function () { openNoterNameModal(null); });
+    });
+    Array.prototype.forEach.call(root.querySelectorAll("details[data-notes-details]"), function (el) {
+      el.addEventListener("toggle", function () { state.openNotes[el.getAttribute("data-notes-details")] = el.open; });
+    });
+    Array.prototype.forEach.call(root.querySelectorAll("[data-legacy-clear-company]"), function (el) {
+      el.addEventListener("click", function () {
+        if (!confirm("Deze geïmporteerde notitie verwijderen?")) return;
+        updateCompany(el.getAttribute("data-legacy-clear-company"), { notes: "" });
       });
     });
     Array.prototype.forEach.call(root.querySelectorAll("[data-company-linkedin]"), function (el) {
@@ -1329,14 +1387,178 @@
     });
   }
 
-  function flashSaved(companyId) {
-    var hint = $('[data-notes-hint="' + companyId + '"]');
-    if (!hint) return;
-    hint.textContent = "Opgeslagen";
-    clearTimeout(state.savedTimers[companyId]);
-    state.savedTimers[companyId] = setTimeout(function () {
-      if (hint) hint.textContent = "Wijzigingen worden automatisch opgeslagen";
-    }, 1800);
+  // ---------- notes ----------
+  // A note belongs to one company OR one contact and records who wrote it
+  // and when. Imported text (companies.notes, contacts.notities /
+  // belaantekeningen) is shown beneath them, read-only.
+
+  function noteKey(kind, id) { return kind + ":" + id; }
+
+  function indexNotes(rows) {
+    var by = {};
+    (rows || []).forEach(function (n) {
+      var key = n.company_id ? noteKey("company", n.company_id) : noteKey("contact", n.contact_id);
+      (by[key] = by[key] || []).push(n);
+    });
+    Object.keys(by).forEach(function (k) { by[k].sort(function (a, b) { return a.created_at < b.created_at ? 1 : -1; }); });
+    return by;
+  }
+
+  function notesFor(kind, id) { return state.notesByOwner[noteKey(kind, id)] || []; }
+
+  function formatNoteTime(iso) {
+    return new Date(iso).toLocaleString("nl-NL", { day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit" });
+  }
+
+  // Adds, replaces or removes one note in state, by id — used for live
+  // updates from anyone and for the author's own insert/delete (so a note
+  // shows at once, and the echo from realtime just replaces it in place).
+  function applyNoteChange(payload) {
+    var rec = payload.eventType === "DELETE" ? payload.old : payload.new;
+    var id = rec && rec.id;
+    if (!id) return;
+    Object.keys(state.notesByOwner).forEach(function (key) {
+      state.notesByOwner[key] = state.notesByOwner[key].filter(function (n) { return n.id !== id; });
+    });
+    if (payload.eventType !== "DELETE" && rec.created_at) {
+      var key = rec.company_id ? noteKey("company", rec.company_id) : noteKey("contact", rec.contact_id);
+      var list = state.notesByOwner[key] || [];
+      list.push(rec);
+      list.sort(function (a, b) { return a.created_at < b.created_at ? 1 : -1; });
+      state.notesByOwner[key] = list;
+    }
+    renderTable();
+  }
+
+  function deriveNoterName() {
+    var local = ((state.me && state.me.email) || "").split("@")[0];
+    return local.split(/[._-]+/).filter(Boolean).map(function (w) { return w.charAt(0).toUpperCase() + w.slice(1); }).join(" ");
+  }
+
+  // Calls done(name) with the name to write on a note; asks once if this
+  // account has none yet. The name lives on the account (user metadata), so
+  // it follows the person to other browsers; cancelling adds nothing.
+  function withNoterName(done) {
+    if (state.noterName) { done(state.noterName); return; }
+    openNoterNameModal(done);
+  }
+
+  function openNoterNameModal(done) {
+    var html = '';
+    html += '<div class="modal-overlay" id="overlay">';
+    html += '  <div class="modal">';
+    html += '    <h2>Hoe heet je?</h2>';
+    html += '    <div class="save-hint" style="margin-top:0">Deze naam komt bij je notities te staan. Je kunt hem later weer wijzigen.</div>';
+    html += '    <div class="form-field full"><label>Naam</label><input type="text" id="f-noter-name" value="' + esc(state.noterName || deriveNoterName()) + '" autocomplete="name"></div>';
+    html += '    <div class="modal-actions"><button class="btn btn-quiet" id="modal-cancel">Annuleren</button><button class="btn" id="modal-save">Opslaan</button></div>';
+    html += '  </div>';
+    html += '</div>';
+    $("#modal-root").innerHTML = html;
+    $("#overlay").addEventListener("click", function (e) { if (e.target.id === "overlay") closeModal(); });
+    $("#modal-cancel").addEventListener("click", closeModal);
+    $("#f-noter-name").addEventListener("keydown", function (e) { if (e.key === "Enter") $("#modal-save").click(); });
+    $("#f-noter-name").focus();
+    $("#f-noter-name").select();
+    $("#modal-save").addEventListener("click", function () {
+      var name = $("#f-noter-name").value.trim();
+      if (!name) { toast("Geef een naam op"); return; }
+      state.noterName = name;
+      closeModal();
+      supabase.auth.updateUser({ data: { display_name: name } }).then(function (res) {
+        if (res && res.error) { console.error(res.error); toast("Naam niet bewaard op je account — wel gebruikt voor deze notitie"); }
+      });
+      renderTable();
+      if (done) done(name);
+    });
+  }
+
+  function notesUnavailableToast() {
+    toast("Notities zijn nog niet beschikbaar — voer eerst de nieuwste supabase/schema.sql uit");
+  }
+
+  function saveNote(kind, ownerId, text, onSaved) {
+    if (!state.notesAvailable) { notesUnavailableToast(); return; }
+    text = (text || "").trim();
+    if (!text) { toast("Schrijf eerst een notitie"); return; }
+    withNoterName(function (name) {
+      var row = { body: text, author_id: state.me.id, author_name: name };
+      row[kind === "company" ? "company_id" : "contact_id"] = ownerId;
+      supabase.from("notes").insert(row).select().single().then(function (res) {
+        if (res.error) { console.error(res.error); toast("Notitie opslaan mislukt"); return; }
+        applyNoteChange({ eventType: "INSERT", new: res.data });
+        toast("Notitie toegevoegd");
+        if (onSaved) onSaved(res.data);
+      });
+    });
+  }
+
+  function addNoteFromBox(key) {
+    var parts = key.split(":");
+    var box = document.querySelector('[data-note-input="' + key + '"]');
+    var text = box ? box.value : (state.noteDrafts[key] || "");
+    saveNote(parts[0], parts[1], text, function () { delete state.noteDrafts[key]; renderTable(); });
+  }
+
+  function deleteNote(noteId) {
+    if (!confirm("Deze notitie verwijderen?")) return;
+    supabase.from("notes").delete().eq("id", noteId).then(function (res) {
+      if (res.error) { console.error(res.error); toast("Verwijderen mislukt"); return; }
+      applyNoteChange({ eventType: "DELETE", old: { id: noteId } });
+      toast("Notitie verwijderd");
+    });
+  }
+
+  function renderNoteItems(kind, id) {
+    return notesFor(kind, id).map(function (n) {
+      var mine = state.me && n.author_id === state.me.id;
+      return '<div class="note"><div class="note-meta"><b>' + esc(n.author_name || "Onbekend") + '</b><span>' + esc(formatNoteTime(n.created_at)) + '</span>' +
+        (mine ? '<button type="button" class="icon-btn danger note-del" data-note-delete="' + n.id + '" title="Notitie verwijderen">×</button>' : '') +
+        '</div><div class="note-body">' + esc(n.body) + '</div></div>';
+    }).join("");
+  }
+
+  function renderNoteCompose(kind, id) {
+    var key = noteKey(kind, id);
+    var html = '<div class="note-compose">';
+    html += '<textarea class="note-input" data-note-input="' + key + '" placeholder="Schrijf een notitie…">' + esc(state.noteDrafts[key] || "") + '</textarea>';
+    html += '<div class="note-compose-row"><span class="note-as">' +
+      (state.noterName ? 'Als <b>' + esc(state.noterName) + '</b> · <button type="button" data-noter-edit="1">wijzig naam</button>' : 'Ctrl+Enter om toe te voegen') +
+      '</span><button type="button" class="btn btn-quiet" data-note-add="' + key + '">Notitie toevoegen</button></div>';
+    return html + '</div>';
+  }
+
+  function renderLegacyNote(label, text, clearAttr) {
+    return '<div class="note note-legacy"><div class="note-meta"><b>' + esc(label) + '</b>' +
+      (clearAttr ? '<button type="button" class="icon-btn danger note-del" ' + clearAttr + ' title="Verwijderen">×</button>' : '') +
+      '</div><div class="note-body">' + esc(text) + '</div></div>';
+  }
+
+  function renderCompanyNotes(c) {
+    var html = '<span class="field-label">Notities (' + notesFor("company", c.id).length + ')</span><div class="notes-log">';
+    if (!state.notesAvailable) {
+      html += '<div class="empty-note">Notities zijn nog niet beschikbaar: voer de nieuwste <code>supabase/schema.sql</code> uit.</div>';
+    } else {
+      html += renderNoteCompose("company", c.id) + renderNoteItems("company", c.id);
+    }
+    if (c.notes) html += renderLegacyNote("Geïmporteerde notitie", c.notes, 'data-legacy-clear-company="' + c.id + '"');
+    return html + '</div>';
+  }
+
+  function renderContactNotes(p) {
+    var key = noteKey("contact", p.id);
+    var mine = notesFor("contact", p.id);
+    var legacyCount = (p.notities ? 1 : 0) + (p.belaantekeningen ? 1 : 0);
+    var total = mine.length + legacyCount;
+    var open = state.openNotes[key] != null ? state.openNotes[key] : total > 0;
+    var html = '<details class="contact-notes" data-notes-details="' + key + '"' + (open ? " open" : "") + '><summary>Notities (' + total + ')</summary><div class="notes-log">';
+    if (!state.notesAvailable) {
+      html += '<div class="empty-note">Notities zijn nog niet beschikbaar: voer de nieuwste <code>supabase/schema.sql</code> uit.</div>';
+    } else {
+      html += renderNoteCompose("contact", p.id) + renderNoteItems("contact", p.id);
+    }
+    if (p.notities) html += renderLegacyNote("Geïmporteerde notitie", p.notities);
+    if (p.belaantekeningen) html += renderLegacyNote("Belaantekeningen (import)", p.belaantekeningen);
+    return html + '</div></details>';
   }
 
   function toggleCompany(id) {
@@ -1649,7 +1871,7 @@
     html += '      <div class="form-field full"><label>Bedrijfsnaam</label><input type="text" id="f-name" placeholder="Bijv. Van Herck Verpakkingen"></div>';
     html += '      <div class="form-field full"><label>Company LinkedIn</label><input type="text" id="f-linkedin" placeholder="https://linkedin.com/company/…"></div>';
     html += '      <div class="form-field full"><label>Fase</label><select id="f-stage">' + STAGES.map(function (s) { return '<option value="' + s.key + '">' + esc(s.label) + '</option>'; }).join("") + '</select></div>';
-    html += '      <div class="form-field full"><label>Bedrijfsnotities</label><textarea id="f-notes"></textarea></div>';
+    html += '      <div class="form-field full"><label>Eerste notitie (optioneel)</label><textarea id="f-notes"></textarea></div>';
     html += '    </div>';
     html += '    <div class="modal-actions"><button class="btn btn-quiet" id="modal-cancel">Annuleren</button><button class="btn" id="modal-save">Bedrijf toevoegen</button></div>';
     html += '  </div>';
@@ -1660,14 +1882,15 @@
     $("#modal-save").addEventListener("click", function () {
       var name = $("#f-name").value.trim();
       if (!name) { toast("Geef een bedrijfsnaam op"); return; }
+      var firstNote = $("#f-notes").value.trim();
       supabase.from("companies").insert({
         name: name,
         linkedin: $("#f-linkedin").value.trim(),
-        stage: $("#f-stage").value,
-        notes: $("#f-notes").value
-      }).then(function (res) {
+        stage: $("#f-stage").value
+      }).select().single().then(function (res) {
         if (res.error) { console.error(res.error); toast("Toevoegen mislukt"); return; }
         toast("Bedrijf toegevoegd"); closeModal();
+        if (firstNote) saveNote("company", res.data.id, firstNote);
       });
     });
   }
@@ -1691,8 +1914,6 @@
     html += field("Beller", "f-beller", contact.beller);
     html += field("Vervolg", "f-vervolg", contact.vervolg);
     html += dateField("Vervolgdatum", "f-vervolgdatum", contact.follow_up_date);
-    html += fieldArea("Notities", "f-notities", contact.notities, true);
-    html += fieldArea("Belaantekeningen", "f-belaantekeningen", contact.belaantekeningen, true);
     html += fieldArea("Mogelijk interessante hook", "f-hook", contact.hook, true);
     html += '    </div>';
     html += '    <div class="modal-actions"><button class="btn btn-quiet" id="modal-cancel">Annuleren</button><button class="btn" id="modal-save">' + (isEdit ? "Opslaan" : "Toevoegen") + '</button></div>';
@@ -1730,8 +1951,6 @@
         beller: $("#f-beller").value.trim(),
         vervolg: $("#f-vervolg").value.trim(),
         follow_up_date: $("#f-vervolgdatum").value || null,
-        notities: $("#f-notities").value.trim(),
-        belaantekeningen: $("#f-belaantekeningen").value.trim(),
         hook: $("#f-hook").value.trim()
       };
       if (!data.first_name && !data.last_name) { toast("Geef een naam op"); return; }
@@ -1866,7 +2085,7 @@
     if (infoLines.length) {
       html += '<div><span class="field-label">Ter info (geen apart veld in Leadbeheer)</span>';
       html += '<div style="font-size:13px;color:var(--sub);margin:6px 0 10px;">' + infoLines.map(esc).join("<br>") + '</div>';
-      html += '<button class="btn btn-quiet" id="lusha-append-notes">Toevoegen aan Bedrijfsnotities</button></div>';
+      html += '<button class="btn btn-quiet" id="lusha-append-notes">Toevoegen als notitie</button></div>';
     }
     if (!applyRows.length && !infoLines.length) {
       html += '<div class="empty-note">Geen bruikbare gegevens gevonden voor dit bedrijf.</div>';
@@ -1893,11 +2112,8 @@
     var appendBtn = $("#lusha-append-notes");
     if (appendBtn) {
       appendBtn.addEventListener("click", function () {
-        var summary = "Lusha (" + new Date().toISOString().slice(0, 10) + "):\n" + infoLines.join("\n");
-        var newNotes = company.notes ? company.notes + "\n\n" + summary : summary;
-        supabase.from("companies").update({ notes: newNotes }).eq("id", company.id).then(function (res) {
-          if (res.error) { console.error(res.error); toast("Toevoegen mislukt"); return; }
-          toast("Toegevoegd aan Bedrijfsnotities");
+        var summary = "Lusha:\n" + infoLines.join("\n");
+        saveNote("company", company.id, summary, function () {
           appendBtn.textContent = "Toegevoegd";
           appendBtn.disabled = true;
         });
@@ -1964,12 +2180,24 @@
     XLSX.writeFile(wb, "leadbeheer-sjabloon.xlsx");
   }
 
+  // The sheet has one text cell per notes column, so the dated notes are
+  // written into it after any imported text, oldest first, each as
+  // "[dd-mm-yyyy hh:mm Name] text" — nothing is lost on export, and the
+  // text imports back in as that company's/contact's imported note.
+  function composeNotesText(legacy, notes) {
+    var parts = legacy ? [legacy] : [];
+    notes.slice().reverse().forEach(function (n) {
+      parts.push("[" + formatNoteTime(n.created_at) + " " + (n.author_name || "?") + "] " + n.body);
+    });
+    return parts.join("\n\n");
+  }
+
   function exportData() {
     var rows = [TEMPLATE_COLUMNS];
     state.companies.forEach(function (c) {
       var contacts = state.contactsByCompany[c.id] || [];
       var tagNamesForExport = (state.companyTagIds[c.id] || []).map(function (id) { var t = tagById(id); return t ? t.name : null; }).filter(Boolean);
-      var base = { "Company": c.name, "Company LinkedIn": c.linkedin, "Fase": stageInfo(c.stage).label, "Bedrijfsnotities": c.notes, "Tags": tagNamesForExport.join(", ") };
+      var base = { "Company": c.name, "Company LinkedIn": c.linkedin, "Fase": stageInfo(c.stage).label, "Bedrijfsnotities": composeNotesText(c.notes, notesFor("company", c.id)), "Tags": tagNamesForExport.join(", ") };
       ENRICHMENT_FIELDS.forEach(function (f) { base[f[0]] = c[f[1]] != null ? c[f[1]] : ""; });
       if (!contacts.length) {
         rows.push(rowToArray(base));
@@ -1980,7 +2208,7 @@
           "First Name": p.first_name, "Last Name": p.last_name, "Job Title": p.job_title, "Gender": p.gender,
           "Email": p.email, "Email 2": p.email2, "Mobile Phone": p.mobile_phone, "Work Phone": p.work_phone,
           "Beller": p.beller, "Vervolg": p.vervolg, "Vervolgdatum": p.follow_up_date || "",
-          "Notities": p.notities, "Belaantekeningen": p.belaantekeningen, "Mogelijk interessante hook": p.hook
+          "Notities": composeNotesText(p.notities, notesFor("contact", p.id)), "Belaantekeningen": p.belaantekeningen, "Mogelijk interessante hook": p.hook
         })));
       });
     });
@@ -2635,7 +2863,7 @@
     { key: "name", label: "Naam", type: "text" },
     { key: "linkedin", label: "Company LinkedIn", type: "text" },
     { key: "stage", label: "Fase", type: "stage" },
-    { key: "notes", label: "Bedrijfsnotities", type: "notes" }
+    { key: "notes", label: "Geïmporteerde notitie", type: "notes" }
   ];
   var MERGE_EXTRA_FIELDS = ENRICHMENT_FIELDS.map(function (f) { return { key: f[1], label: f[0], type: f[2] }; });
 
@@ -2650,10 +2878,10 @@
 
   // Same rule the SQL cleanup uses: a shared e-mail, or a shared name unless
   // both people have different e-mail addresses.
-  function contactLooksDuplicate(p, others) {
+  function findDuplicateOf(p, others) {
     var email = (p.email || "").trim().toLowerCase();
     var name = normalizePersonName(p.first_name, p.last_name);
-    return others.some(function (o) {
+    return others.find(function (o) {
       var otherEmail = (o.email || "").trim().toLowerCase();
       if (email && otherEmail && email === otherEmail) return true;
       return !!name && name === normalizePersonName(o.first_name, o.last_name) && (!email || !otherEmail);
@@ -2677,7 +2905,7 @@
     var loser = keeper === A ? B : A;
     var keeperContacts = keeper === A ? contactsA : contactsB;
     var loserContacts = keeper === A ? contactsB : contactsA;
-    var dupes = loserContacts.filter(function (p) { return contactLooksDuplicate(p, keeperContacts); });
+    var dupes = loserContacts.filter(function (p) { return !!findDuplicateOf(p, keeperContacts); });
 
     var tagUnion = {};
     (state.companyTagIds[A.id] || []).concat(state.companyTagIds[B.id] || []).forEach(function (t) { tagUnion[t] = true; });
@@ -2708,7 +2936,7 @@
     html += '<div class="modal-overlay" id="overlay">';
     html += '  <div class="modal merge">';
     html += '    <h2>Bedrijven samenvoegen</h2>';
-    html += '    <div class="merge-note">Kies per veld welke waarde blijft. Er blijft <b>één bedrijf</b> over met alle contactpersonen, tags en SuperScore-historie van beide. Dit kan niet ongedaan gemaakt worden.</div>';
+    html += '    <div class="merge-note">Kies per veld welke waarde blijft. Er blijft <b>één bedrijf</b> over met alle contactpersonen, notities, tags en SuperScore-historie van beide. Dit kan niet ongedaan gemaakt worden.</div>';
     html += '    <div class="merge-rows">';
     html += '      <div class="merge-head"><span>Veld</span><span title="' + esc(A.name) + '">A · ' + esc(A.name) + ' (' + contactsA.length + ' contacten)</span><span title="' + esc(B.name) + '">B · ' + esc(B.name) + ' (' + contactsB.length + ' contacten)</span></div>';
     MERGE_MAIN_FIELDS.forEach(function (f) { html += rowHtml(f, true); });
@@ -2747,15 +2975,19 @@
         if (String(v) !== String(keeper[f.key] == null ? "" : keeper[f.key])) patch[f.key] = v;
       });
       var dropBox = $("#mf-drop-dupes");
-      var dupeIds = dropBox && dropBox.checked ? dupes.map(function (p) { return p.id; }) : [];
-      runMerge(keeper, loser, patch, dupeIds);
+      var dropping = dropBox && dropBox.checked ? dupes : [];
+      var dupeIds = dropping.map(function (p) { return p.id; });
+      // A skipped duplicate's notes aren't thrown away: they go to the
+      // contact it duplicates at the surviving company.
+      var dupeMoves = dropping.map(function (p) { return { from: p.id, to: findDuplicateOf(p, keeperContacts).id }; });
+      runMerge(keeper, loser, patch, dupeIds, dupeMoves);
     });
   }
 
   // Nothing is deleted until everything has been copied over: if a step
   // fails halfway the second company is still there, and running the merge
   // again just continues (contacts already moved are no longer in it).
-  function runMerge(keeper, loser, patch, dupeIds) {
+  function runMerge(keeper, loser, patch, dupeIds, dupeMoves) {
     if (runMerge.busy) return;
     runMerge.busy = true;
     var saveBtn = $("#modal-save");
@@ -2768,11 +3000,24 @@
         return supabase.from("companies").update(patch).eq("id", keeper.id).then(function (res) { must(res, "Gegevens bijwerken mislukt"); });
       })
       .then(function () {
+        if (!state.notesAvailable || !(dupeMoves || []).length) return;
+        return dupeMoves.reduce(function (p, m) {
+          return p.then(function () {
+            return supabase.from("notes").update({ contact_id: m.to }).eq("contact_id", m.from).then(function (res) { must(res, "Notities van dubbele contactpersoon overzetten mislukt"); });
+          });
+        }, Promise.resolve());
+      })
+      .then(function () {
         if (!dupeIds.length) return;
         return supabase.from("contacts").delete().in("id", dupeIds).then(function (res) { must(res, "Dubbele contactpersonen verwijderen mislukt"); });
       })
       .then(function () {
         return supabase.from("contacts").update({ company_id: keeper.id }).eq("company_id", loser.id).then(function (res) { must(res, "Contactpersonen verplaatsen mislukt"); });
+      })
+      .then(function () {
+        // Without this the other company's notes would be deleted along with it.
+        if (!state.notesAvailable) return;
+        return supabase.from("notes").update({ company_id: keeper.id }).eq("company_id", loser.id).then(function (res) { must(res, "Notities overzetten mislukt"); });
       })
       .then(function () {
         var tagIds = state.companyTagIds[loser.id] || [];
@@ -2948,14 +3193,29 @@
     if (!profile) return; // requireUser already redirected to login.html
 
     if (profile.role === "admin") $("#adminLink").style.display = "inline-flex";
+    state.me = { id: profile.id, email: profile.email, role: profile.role };
+    supabase.auth.getUser().then(function (res) {
+      var meta = (res && res.data && res.data.user && res.data.user.user_metadata) || {};
+      state.noterName = (meta.display_name || "").trim();
+    }).catch(function () {});
 
     Promise.all([
       supabase.from("companies").select("*").order("name"),
       supabase.from("contacts").select("*"),
       supabase.from("tags").select("*").order("name"),
-      supabase.from("company_tags").select("*")
+      supabase.from("company_tags").select("*"),
+      supabase.from("notes").select("*")
     ]).then(function (results) {
-      var companiesRes = results[0], contactsRes = results[1], tagsRes = results[2], companyTagsRes = results[3];
+      var companiesRes = results[0], contactsRes = results[1], tagsRes = results[2], companyTagsRes = results[3], notesRes = results[4];
+      // Notes are separate on purpose: until supabase/schema.sql has been run
+      // there's no notes table, and that must not stop the rest from loading.
+      if (notesRes.error) {
+        console.error(notesRes.error);
+        state.notesAvailable = false;
+      } else {
+        state.notesAvailable = true;
+        state.notesByOwner = indexNotes(notesRes.data);
+      }
       var err = companiesRes.error || contactsRes.error || tagsRes.error || companyTagsRes.error;
       if (err) {
         showError("Kon gegevens niet laden: " + err.message);
@@ -2990,6 +3250,12 @@
     contactsChannel = supabase.channel("contacts-live")
       .on("postgres_changes", { event: "*", schema: "public", table: "contacts" }, function (payload) {
         applyContactChange(payload);
+      })
+      .subscribe();
+
+    notesChannel = supabase.channel("notes-live")
+      .on("postgres_changes", { event: "*", schema: "public", table: "notes" }, function (payload) {
+        applyNoteChange(payload);
       })
       .subscribe();
 

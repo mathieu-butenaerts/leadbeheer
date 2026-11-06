@@ -126,6 +126,26 @@ create table if not exists public.company_superscore_history (
 );
 create index if not exists idx_superscore_history_company on public.company_superscore_history(company_id);
 
+-- Notes written in the app: a log of dated entries under a company OR a
+-- contact (exactly one of the two), each with who wrote it. author_name is
+-- stored on the note itself so it keeps reading correctly if the person's
+-- display name changes later or the account goes away. The older single-text
+-- fields (companies.notes, contacts.notities/belaantekeningen) stay as they
+-- are -- imports fill them and the app shows them as "geïmporteerde notitie".
+create table if not exists public.notes (
+  id          uuid primary key default gen_random_uuid(),
+  company_id  uuid references public.companies(id) on delete cascade,
+  contact_id  uuid references public.contacts(id) on delete cascade,
+  body        text not null,
+  author_id   uuid default auth.uid(),
+  author_name text not null default '',
+  created_at  timestamptz not null default now(),
+  constraint notes_exactly_one_target check ((company_id is not null) <> (contact_id is not null)),
+  constraint notes_body_not_blank check (btrim(body) <> '')
+);
+create index if not exists idx_notes_company on public.notes(company_id) where company_id is not null;
+create index if not exists idx_notes_contact on public.notes(contact_id) where contact_id is not null;
+
 -- Keep companies.contact_count in sync automatically, so the browser never
 -- has to read-modify-write it (that would race when two people edit at once).
 create or replace function public.leads_sync_contact_count() returns trigger
@@ -206,6 +226,22 @@ drop policy if exists "authenticated write company_tags" on public.company_tags;
 create policy "authenticated write company_tags" on public.company_tags
   for all to authenticated using (true) with check (true);
 
+-- Notes: everyone signed in can read; you can only add a note as yourself,
+-- and only delete your own (they're a record of who said what).
+alter table public.notes enable row level security;
+
+drop policy if exists "authenticated read notes" on public.notes;
+create policy "authenticated read notes" on public.notes
+  for select to authenticated using (true);
+
+drop policy if exists "authenticated add own notes" on public.notes;
+create policy "authenticated add own notes" on public.notes
+  for insert to authenticated with check (author_id = auth.uid());
+
+drop policy if exists "authenticated delete own notes" on public.notes;
+create policy "authenticated delete own notes" on public.notes
+  for delete to authenticated using (author_id = auth.uid());
+
 alter table public.company_superscore_history enable row level security;
 
 drop policy if exists "authenticated read superscore history" on public.company_superscore_history;
@@ -239,6 +275,10 @@ begin
   end;
   begin
     execute 'alter publication supabase_realtime add table public.company_superscore_history';
+  exception when duplicate_object then null;
+  end;
+  begin
+    execute 'alter publication supabase_realtime add table public.notes';
   exception when duplicate_object then null;
   end;
 end $$;
