@@ -276,7 +276,8 @@
   details.contact-notes{ border-top:1px solid var(--border); padding-top:9px; }
   details.contact-notes > summary{ cursor:pointer; font-size:10.5px; font-weight:700; text-transform:uppercase; letter-spacing:.05em; color:var(--muted); }
   details.contact-notes[open] > summary{ margin-bottom:8px; }
-  .match-hint{ font-size:11px; color:var(--blauw-l); margin-top:3px; }
+  .match-hint{ font-size:11px; color:var(--blauw-l); margin-top:3px; overflow-wrap:anywhere; }
+  mark{ background:rgba(25,157,217,0.35); color:inherit; border-radius:3px; padding:0 1px; }
 
   .empty-state{ text-align:center; color:var(--muted); padding:48px 20px; font-size:13px; }
   .loading{ text-align:center; color:var(--muted); padding:60px 20px; }
@@ -390,6 +391,7 @@
 
   <div class="filters">
     <input type="text" id="search-input" placeholder="Zoek op bedrijf of contactpersoon…">
+    <input type="text" id="notes-search-input" placeholder="Zoek in notities…">
     <div class="stage-pills" id="stage-chips"></div>
     <select id="beller-filter"><option value="">Alle bellers</option></select>
     <select id="followup-filter">
@@ -482,6 +484,7 @@
     selectedIds: {}, // companyId -> true, for the bulk-action checkboxes
     expandedCompanyId: null,
     search: "",
+    notesSearch: "",
     stageFilter: "all",
     bellerFilter: "",
     followUpFilter: "",
@@ -492,8 +495,7 @@
     notesAvailable: true,  // false until supabase/schema.sql (notes table) has been run
     noteDrafts: {},        // unsent text per notes box, so a live update can't wipe what's being typed
     openNotes: {},         // contact-card notes sections the user opened/closed
-    me: null,              // { id, email, role } of the signed-in user
-    noterName: ""          // display name written on this user's notes
+    me: null               // { id, email, role } of the signed-in user (notes are written under the e-mail)
   };
   var companiesChannel = null;
   var contactsChannel = null;
@@ -1018,6 +1020,7 @@
     var list = state.companies.filter(function (c) {
       if (state.stageFilter !== "all" && c.stage !== state.stageFilter) return false;
       if (q && !companyNameMatches(c, q) && !matchingContacts(c, q).length) return false;
+      if (notesSearchTokens().length && !noteHits(c).length) return false;
       if (!companyMatchesContactFilters(c)) return false;
       if (state.tagFilters.length && !companyMatchesTagFilters(c)) return false;
       return true;
@@ -1103,6 +1106,15 @@
       var hits = matchingContacts(c, searchQuery);
       var hitNames = hits.slice(0, 3).map(function (p) { return ((p.first_name || "") + " " + (p.last_name || "")).trim() || p.email || "(naam onbekend)"; });
       if (hitNames.length) matchHint = '<div class="match-hint">Contactpersoon: ' + esc(hitNames.join(", ")) + (hits.length > 3 ? " +" + (hits.length - 3) : "") + '</div>';
+    }
+    // Same for the notes search: show the first matching note's context.
+    var noteTokens = notesSearchTokens();
+    if (noteTokens.length) {
+      var found = noteHits(c);
+      found.slice(0, 2).forEach(function (h) {
+        matchHint += '<div class="match-hint">In notitie' + (h.who ? ' bij ' + esc(h.who) : '') + ': ' + highlightText(noteSnippet(h.text, noteTokens)) + '</div>';
+      });
+      if (found.length > 2) matchHint += '<div class="match-hint">+' + (found.length - 2) + ' meer</div>';
     }
     html += '  <td><div class="company-name-cell"><span class="company-name">' + esc(c.name || "(naam onbekend)") + '</span>' + linkedin + rowTagChips + '</div>' + matchHint + '</td>';
     html += '  <td><select class="stage-pill tnum" data-stage-select="' + c.id + '" style="' + stagePillStyle(c.stage) + '" onclick="event.stopPropagation()">' + stageOptions + '</select></td>';
@@ -1306,9 +1318,6 @@
     Array.prototype.forEach.call(root.querySelectorAll("[data-note-delete]"), function (el) {
       el.addEventListener("click", function () { deleteNote(el.getAttribute("data-note-delete")); });
     });
-    Array.prototype.forEach.call(root.querySelectorAll("[data-noter-edit]"), function (el) {
-      el.addEventListener("click", function () { openNoterNameModal(null); });
-    });
     Array.prototype.forEach.call(root.querySelectorAll("details[data-notes-details]"), function (el) {
       el.addEventListener("toggle", function () { state.openNotes[el.getAttribute("data-notes-details")] = el.open; });
     });
@@ -1406,6 +1415,58 @@
 
   function notesFor(kind, id) { return state.notesByOwner[noteKey(kind, id)] || []; }
 
+  // ---- searching in notes ----
+  // "Zoek in notities" looks through every note under a company — its own and
+  // its contacts', the imported text too — and the author's e-mail. All words
+  // must occur in the same note, in any order.
+  function notesSearchTokens() { return state.notesSearch.trim().toLowerCase().split(/\s+/).filter(Boolean); }
+  function textHasTokens(text, tokens) {
+    var t = String(text || "").toLowerCase();
+    return tokens.every(function (k) { return t.indexOf(k) !== -1; });
+  }
+  // A note matches when all words are in its text, OR all are in its author's
+  // e-mail — not a mix, or a short word like "na" would match every note
+  // written by someone whose address contains it.
+  function noteMatches(text, author, tokens) {
+    return !!text && (textHasTokens(text, tokens) || textHasTokens(author, tokens));
+  }
+  function contactLabel(p) { return ((p.first_name || "") + " " + (p.last_name || "")).trim() || p.email || "(naam onbekend)"; }
+
+  function noteHits(c) {
+    var tokens = notesSearchTokens();
+    if (!tokens.length) return [];
+    var hits = [];
+    function consider(who, text, author) {
+      if (noteMatches(text, author, tokens)) hits.push({ who: who, text: text });
+    }
+    notesFor("company", c.id).forEach(function (n) { consider("", n.body, n.author_name); });
+    consider("", c.notes, "");
+    (state.contactsByCompany[c.id] || []).forEach(function (p) {
+      var name = contactLabel(p);
+      notesFor("contact", p.id).forEach(function (n) { consider(name, n.body, n.author_name); });
+      consider(name, p.notities, "");
+      consider(name, p.belaantekeningen, "");
+    });
+    return hits;
+  }
+
+  function noteSnippet(text, tokens) {
+    var flat = String(text).replace(/\s+/g, " ");
+    var low = flat.toLowerCase(), at = -1;
+    tokens.forEach(function (t) { var i = low.indexOf(t); if (i !== -1 && (at === -1 || i < at)) at = i; });
+    if (at === -1) at = 0;
+    var start = Math.max(0, at - 30), end = Math.min(flat.length, at + 70);
+    return (start > 0 ? "…" : "") + flat.slice(start, end) + (end < flat.length ? "…" : "");
+  }
+
+  // Escaped text with the searched words wrapped in <mark>.
+  function highlightText(text) {
+    var tokens = notesSearchTokens();
+    if (!tokens.length) return esc(text);
+    var re = new RegExp("(" + tokens.map(function (t) { return t.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"); }).join("|") + ")", "gi");
+    return String(text).split(re).map(function (part, i) { return i % 2 ? "<mark>" + esc(part) + "</mark>" : esc(part); }).join("");
+  }
+
   function formatNoteTime(iso) {
     return new Date(iso).toLocaleString("nl-NL", { day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit" });
   }
@@ -1430,48 +1491,6 @@
     renderTable();
   }
 
-  function deriveNoterName() {
-    var local = ((state.me && state.me.email) || "").split("@")[0];
-    return local.split(/[._-]+/).filter(Boolean).map(function (w) { return w.charAt(0).toUpperCase() + w.slice(1); }).join(" ");
-  }
-
-  // Calls done(name) with the name to write on a note; asks once if this
-  // account has none yet. The name lives on the account (user metadata), so
-  // it follows the person to other browsers; cancelling adds nothing.
-  function withNoterName(done) {
-    if (state.noterName) { done(state.noterName); return; }
-    openNoterNameModal(done);
-  }
-
-  function openNoterNameModal(done) {
-    var html = '';
-    html += '<div class="modal-overlay" id="overlay">';
-    html += '  <div class="modal">';
-    html += '    <h2>Hoe heet je?</h2>';
-    html += '    <div class="save-hint" style="margin-top:0">Deze naam komt bij je notities te staan. Je kunt hem later weer wijzigen.</div>';
-    html += '    <div class="form-field full"><label>Naam</label><input type="text" id="f-noter-name" value="' + esc(state.noterName || deriveNoterName()) + '" autocomplete="name"></div>';
-    html += '    <div class="modal-actions"><button class="btn btn-quiet" id="modal-cancel">Annuleren</button><button class="btn" id="modal-save">Opslaan</button></div>';
-    html += '  </div>';
-    html += '</div>';
-    $("#modal-root").innerHTML = html;
-    $("#overlay").addEventListener("click", function (e) { if (e.target.id === "overlay") closeModal(); });
-    $("#modal-cancel").addEventListener("click", closeModal);
-    $("#f-noter-name").addEventListener("keydown", function (e) { if (e.key === "Enter") $("#modal-save").click(); });
-    $("#f-noter-name").focus();
-    $("#f-noter-name").select();
-    $("#modal-save").addEventListener("click", function () {
-      var name = $("#f-noter-name").value.trim();
-      if (!name) { toast("Geef een naam op"); return; }
-      state.noterName = name;
-      closeModal();
-      supabase.auth.updateUser({ data: { display_name: name } }).then(function (res) {
-        if (res && res.error) { console.error(res.error); toast("Naam niet bewaard op je account — wel gebruikt voor deze notitie"); }
-      });
-      renderTable();
-      if (done) done(name);
-    });
-  }
-
   function notesUnavailableToast() {
     toast("Notities zijn nog niet beschikbaar — voer eerst de nieuwste supabase/schema.sql uit");
   }
@@ -1480,15 +1499,14 @@
     if (!state.notesAvailable) { notesUnavailableToast(); return; }
     text = (text || "").trim();
     if (!text) { toast("Schrijf eerst een notitie"); return; }
-    withNoterName(function (name) {
-      var row = { body: text, author_id: state.me.id, author_name: name };
-      row[kind === "company" ? "company_id" : "contact_id"] = ownerId;
-      supabase.from("notes").insert(row).select().single().then(function (res) {
-        if (res.error) { console.error(res.error); toast("Notitie opslaan mislukt"); return; }
-        applyNoteChange({ eventType: "INSERT", new: res.data });
-        toast("Notitie toegevoegd");
-        if (onSaved) onSaved(res.data);
-      });
+    // Written as the signed-in account's e-mail address.
+    var row = { body: text, author_id: state.me.id, author_name: state.me.email || "Onbekend" };
+    row[kind === "company" ? "company_id" : "contact_id"] = ownerId;
+    supabase.from("notes").insert(row).select().single().then(function (res) {
+      if (res.error) { console.error(res.error); toast("Notitie opslaan mislukt"); return; }
+      applyNoteChange({ eventType: "INSERT", new: res.data });
+      toast("Notitie toegevoegd");
+      if (onSaved) onSaved(res.data);
     });
   }
 
@@ -1513,7 +1531,7 @@
       var mine = state.me && n.author_id === state.me.id;
       return '<div class="note"><div class="note-meta"><b>' + esc(n.author_name || "Onbekend") + '</b><span>' + esc(formatNoteTime(n.created_at)) + '</span>' +
         (mine ? '<button type="button" class="icon-btn danger note-del" data-note-delete="' + n.id + '" title="Notitie verwijderen">×</button>' : '') +
-        '</div><div class="note-body">' + esc(n.body) + '</div></div>';
+        '</div><div class="note-body">' + highlightText(n.body) + '</div></div>';
     }).join("");
   }
 
@@ -1522,7 +1540,7 @@
     var html = '<div class="note-compose">';
     html += '<textarea class="note-input" data-note-input="' + key + '" placeholder="Schrijf een notitie…">' + esc(state.noteDrafts[key] || "") + '</textarea>';
     html += '<div class="note-compose-row"><span class="note-as">' +
-      (state.noterName ? 'Als <b>' + esc(state.noterName) + '</b> · <button type="button" data-noter-edit="1">wijzig naam</button>' : 'Ctrl+Enter om toe te voegen') +
+      'Als <b>' + esc((state.me && state.me.email) || "") + '</b> · Ctrl+Enter om toe te voegen' +
       '</span><button type="button" class="btn btn-quiet" data-note-add="' + key + '">Notitie toevoegen</button></div>';
     return html + '</div>';
   }
@@ -1530,7 +1548,7 @@
   function renderLegacyNote(label, text, clearAttr) {
     return '<div class="note note-legacy"><div class="note-meta"><b>' + esc(label) + '</b>' +
       (clearAttr ? '<button type="button" class="icon-btn danger note-del" ' + clearAttr + ' title="Verwijderen">×</button>' : '') +
-      '</div><div class="note-body">' + esc(text) + '</div></div>';
+      '</div><div class="note-body">' + highlightText(text) + '</div></div>';
   }
 
   function renderCompanyNotes(c) {
@@ -1550,6 +1568,10 @@
     var legacyCount = (p.notities ? 1 : 0) + (p.belaantekeningen ? 1 : 0);
     var total = mine.length + legacyCount;
     var open = state.openNotes[key] != null ? state.openNotes[key] : total > 0;
+    // While searching notes, open the sections that hold a match.
+    var tokens = notesSearchTokens();
+    if (tokens.length && (mine.some(function (n) { return noteMatches(n.body, n.author_name, tokens); }) ||
+        textHasTokens(p.notities, tokens) || textHasTokens(p.belaantekeningen, tokens))) open = true;
     var html = '<details class="contact-notes" data-notes-details="' + key + '"' + (open ? " open" : "") + '><summary>Notities (' + total + ')</summary><div class="notes-log">';
     if (!state.notesAvailable) {
       html += '<div class="empty-note">Notities zijn nog niet beschikbaar: voer de nieuwste <code>supabase/schema.sql</code> uit.</div>';
@@ -3146,6 +3168,10 @@
     state.search = e.target.value;
     renderTable();
   });
+  $("#notes-search-input").addEventListener("input", function (e) {
+    state.notesSearch = e.target.value;
+    renderTable();
+  });
   $("#beller-filter").addEventListener("change", function (e) {
     state.bellerFilter = e.target.value;
     renderTable();
@@ -3194,10 +3220,6 @@
 
     if (profile.role === "admin") $("#adminLink").style.display = "inline-flex";
     state.me = { id: profile.id, email: profile.email, role: profile.role };
-    supabase.auth.getUser().then(function (res) {
-      var meta = (res && res.data && res.data.user && res.data.user.user_metadata) || {};
-      state.noterName = (meta.display_name || "").trim();
-    }).catch(function () {});
 
     Promise.all([
       supabase.from("companies").select("*").order("name"),

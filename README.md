@@ -192,9 +192,8 @@ note keeps who wrote it and when, newest first, and shows up for everyone at
 once. You can delete your own notes (not other people's) and notes can't be
 edited — they're a record of what was said.
 
-The first time you add a note you're asked what to call yourself (sign-up only
-collects an e-mail); that name is saved on your account, so it follows you to
-other browsers, and "wijzig naam" next to the box changes it.
+Notes are written under the e-mail address of the account that's signed in
+(shown above the box as "Als …"); there's no separate display name.
 
 Text that came in through an import (`Bedrijfsnotities`, `Notities`,
 `Belaantekeningen`) is shown below the notes as **Geïmporteerde notitie**,
@@ -214,6 +213,13 @@ The search box finds a company by its name **or by any of its contacts'
 names or e-mail addresses** (first and last name in either order, so
 "jansen jan" finds Jan Jansen). When a company is shown because of a contact,
 the row says which one ("Contactpersoon: Jan Jansen").
+
+**Zoek in notities** (the second box) looks through all notes under a company
+— its own, its contacts', the imported text, and the author's e-mail. All
+words must be in the same note (or all in the author's address), in any
+order. Matching companies show a snippet of the note in their row, and the
+matching words are highlighted when you open the company (contact sections
+holding a match open by themselves). It combines with the other filters.
 
 ## Statuses (Fase)
 
