@@ -22,6 +22,10 @@
     --stage-deal:#2fbf7a; --stage-deal-bg:rgba(47,191,122,0.14);
     --stage-verloren:#E9167D; --stage-verloren-bg:rgba(233,22,125,0.14);
     --stage-discontinued:#8ea2b8; --stage-discontinued-bg:rgba(142,162,184,0.14);
+    --stage-orig-nieuw:#d9a441; --stage-orig-nieuw-bg:rgba(217,164,65,0.14);
+    --stage-orig-gecontacteerd:#4ab8e6; --stage-orig-gecontacteerd-bg:rgba(74,184,230,0.14);
+    --stage-orig-gekwalificeerd:#9b8cff; --stage-orig-gekwalificeerd-bg:rgba(155,140,255,0.16);
+    --stage-orig-gewonnen:#8fd694; --stage-orig-gewonnen-bg:rgba(143,214,148,0.14);
 
     /* Lusha's actual brand purple (#600DFF, from their logo SVG), plus a
        lighter tint for readable text/icons on this dark background. */
@@ -457,19 +461,25 @@
 (function () {
   "use strict";
 
-  // The statuses were renamed in place: the KEYS below are what's stored in
-  // companies.stage (and in old backups), so they stay as they were and only
-  // the labels changed — every company kept its status, just under its new
-  // name (nieuw = In progress, gecontacteerd = Meeting geboekt,
-  // gekwalificeerd = Deal, gewonnen = Discontinued, verloren = Verloren).
+  // The KEYS below are what's stored in companies.stage. The first five were
+  // the original statuses and were renamed in place (so every company kept
+  // its status, just under its new name): nieuw = In progress, gecontacteerd
+  // = Meeting geboekt, gekwalificeerd = Deal, gewonnen = Discontinued,
+  // verloren = Verloren. The original names (Nieuw, Gecontacteerd,
+  // Gekwalificeerd, Gewonnen) are offered again as separate options with
+  // their own keys (orig_*), so nothing already stored changes meaning.
   // Array order is the display order. closed = no longer an active lead;
   // deal = counts as a win on the dashboard.
   var STAGES = [
-    { key: "nieuw",          label: "In progress",     color: "--stage-in-progress",  bg: "--stage-in-progress-bg",  closed: false },
-    { key: "gecontacteerd",  label: "Meeting geboekt", color: "--stage-meeting",      bg: "--stage-meeting-bg",      closed: false },
-    { key: "gekwalificeerd", label: "Deal",            color: "--stage-deal",         bg: "--stage-deal-bg",         closed: true, deal: true },
-    { key: "verloren",       label: "Verloren",        color: "--stage-verloren",     bg: "--stage-verloren-bg",     closed: true },
-    { key: "gewonnen",       label: "Discontinued",    color: "--stage-discontinued", bg: "--stage-discontinued-bg", closed: true }
+    { key: "nieuw",               label: "In progress",     color: "--stage-in-progress",        bg: "--stage-in-progress-bg",        closed: false },
+    { key: "gecontacteerd",       label: "Meeting geboekt", color: "--stage-meeting",            bg: "--stage-meeting-bg",            closed: false },
+    { key: "gekwalificeerd",      label: "Deal",            color: "--stage-deal",               bg: "--stage-deal-bg",               closed: true, deal: true },
+    { key: "verloren",            label: "Verloren",        color: "--stage-verloren",           bg: "--stage-verloren-bg",           closed: true },
+    { key: "gewonnen",            label: "Discontinued",    color: "--stage-discontinued",       bg: "--stage-discontinued-bg",       closed: true },
+    { key: "orig_nieuw",          label: "Nieuw",           color: "--stage-orig-nieuw",         bg: "--stage-orig-nieuw-bg",         closed: false },
+    { key: "orig_gecontacteerd",  label: "Gecontacteerd",   color: "--stage-orig-gecontacteerd", bg: "--stage-orig-gecontacteerd-bg", closed: false },
+    { key: "orig_gekwalificeerd", label: "Gekwalificeerd",  color: "--stage-orig-gekwalificeerd", bg: "--stage-orig-gekwalificeerd-bg", closed: false },
+    { key: "orig_gewonnen",       label: "Gewonnen",        color: "--stage-orig-gewonnen",      bg: "--stage-orig-gewonnen-bg",      closed: true, deal: true }
   ];
   function stageInfo(key) {
     return STAGES.find(function (s) { return s.key === key; }) || STAGES[0];
@@ -2145,14 +2155,14 @@
 
   // ---------- import / export ----------
 
-  // Files made before the rename (old exports/backups/templates) still carry
-  // the previous names; each maps to the same stored key it always had, i.e.
-  // the same new name every existing company got.
-  var LEGACY_STAGE_LABELS = { "nieuw": "nieuw", "gecontacteerd": "gecontacteerd", "gekwalificeerd": "gekwalificeerd", "gewonnen": "gewonnen" };
+  // Matched on the label shown in the app, so a sheet saying "Nieuw" gets the
+  // Nieuw option and "In progress" gets In progress. (Backups made before the
+  // statuses were renamed said "Nieuw" for what is now In progress, and will
+  // re-import as Nieuw — the label in the file is what's honoured.)
   function stageKeyFromLabel(label) {
     var wanted = (label || "").trim().toLowerCase();
     var match = STAGES.find(function (s) { return s.label.toLowerCase() === wanted; });
-    return match ? match.key : (LEGACY_STAGE_LABELS[wanted] || "");
+    return match ? match.key : "";
   }
 
   function parseDateCell(v) {

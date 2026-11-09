@@ -223,24 +223,32 @@ holding a match open by themselves). It combines with the other filters.
 
 ## Statuses (Fase)
 
-In progress · Meeting geboekt · Deal · Verloren · Discontinued. These are the
-five original statuses renamed in place, so no company lost its status — the
-stored values didn't change, only their names:
+Nine options, two sets side by side: **In progress · Meeting geboekt · Deal ·
+Verloren · Discontinued** and the original **Nieuw · Gecontacteerd ·
+Gekwalificeerd · Gewonnen** (Verloren is shared). The first set came from
+renaming the original statuses in place, so no company lost its status — the
+stored values didn't change, only their names. The original names were then
+added back as separate options with their own stored values:
 
-| Stored value | Earlier name | Now |
-|---|---|---|
-| `nieuw` | Nieuw | In progress |
-| `gecontacteerd` | Gecontacteerd | Meeting geboekt |
-| `gekwalificeerd` | Gekwalificeerd | Deal |
-| `verloren` | Verloren | Verloren |
-| `gewonnen` | Gewonnen | Discontinued |
+| Stored value | Shown as |
+|---|---|
+| `nieuw` | In progress |
+| `gecontacteerd` | Meeting geboekt |
+| `gekwalificeerd` | Deal |
+| `verloren` | Verloren |
+| `gewonnen` | Discontinued |
+| `orig_nieuw` | Nieuw |
+| `orig_gecontacteerd` | Gecontacteerd |
+| `orig_gekwalificeerd` | Gekwalificeerd |
+| `orig_gewonnen` | Gewonnen |
 
-"Actieve leads" on the dashboard counts In progress + Meeting geboekt;
-"Deals" counts Deal. Import files (and old backups) that still use the
-earlier names keep working — each maps to the same stored value as in the
-table. The `STAGES` list at the top of the script in `index.html` (and
-`STAGE_LABELS` in `tools/export_database_snapshot.py`) is the one place to
-change names.
+"Actieve leads" on the dashboard counts every status that's still open (In
+progress, Meeting geboekt, Nieuw, Gecontacteerd, Gekwalificeerd); "Deals"
+counts Deal and Gewonnen. Import files are matched on the name shown in the
+app, so a sheet saying "Nieuw" gets Nieuw and "In progress" gets In progress
+(an unknown or blank Fase becomes In progress). The `STAGES` list at the top of
+the script in `index.html` (and `STAGE_LABELS` in
+`tools/export_database_snapshot.py`) is the one place to change names.
 
 ## Bulk-editing companies
 

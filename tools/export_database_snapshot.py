@@ -32,14 +32,18 @@ from _common import TEMPLATE_COLUMNS, clear_output, write_output
 PAGE_SIZE = 1000
 
 # Stored value -> the name shown in the app (keep in step with STAGES in
-# index.html). Backups made before the rename say Nieuw / Gecontacteerd /
-# Gekwalificeerd / Gewonnen for the first four; the app still reads those.
+# index.html). The orig_* values are the original statuses, offered again
+# next to the renamed ones.
 STAGE_LABELS = {
     "nieuw": "In progress",
     "gecontacteerd": "Meeting geboekt",
     "gekwalificeerd": "Deal",
     "verloren": "Verloren",
     "gewonnen": "Discontinued",
+    "orig_nieuw": "Nieuw",
+    "orig_gecontacteerd": "Gecontacteerd",
+    "orig_gekwalificeerd": "Gekwalificeerd",
+    "orig_gewonnen": "Gewonnen",
 }
 
 
